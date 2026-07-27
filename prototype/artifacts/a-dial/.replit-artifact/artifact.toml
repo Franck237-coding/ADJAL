@@ -1,0 +1,23 @@
+kind = "mobile"
+previewPath = "/"
+title = "À Dial - Marché Agricole"
+version = "1.0.0"
+id = "artifacts/a-dial"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 25882
+
+[services.development]
+run = "pnpm --filter @workspace/a-dial run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/a-dial", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/a-dial", "run", "serve" ]
+
+[services.env]
+PORT = "25882"
+BASE_PATH = "/"
