@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Dimensions, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +18,24 @@ export default function SplashScreen() {
   const ring2 = useRef(new Animated.Value(0)).current;
   const ring3 = useRef(new Animated.Value(0)).current;
 
+  const [navigated, setNavigated] = useState(false);
+
+  const navigate = () => {
+    if (navigated) return;
+    setNavigated(true);
+    if (!isOnboarded) {
+      router.replace('/(auth)/onboarding');
+    } else if (user) {
+      if (user.role === 'AGRICULTEUR') {
+        router.replace('/(farmer)/' as any);
+      } else {
+        router.replace('/(app)/' as any);
+      }
+    } else {
+      router.replace('/(auth)/welcome');
+    }
+  };
+
   useEffect(() => {
     Animated.sequence([
       Animated.parallel([
@@ -30,20 +48,20 @@ export default function SplashScreen() {
         Animated.spring(scaleAnim, { toValue: 1, tension: 60, friction: 8, useNativeDriver: true }),
       ]),
     ]).start();
+  }, []);
 
-    const timer = setTimeout(() => {
-      if (isLoading) return;
-      if (!isOnboarded) {
-        router.replace('/(auth)/onboarding');
-      } else if (user) {
-        router.replace('/(app)/');
-      } else {
-        router.replace('/(auth)/welcome');
-      }
-    }, 2800);
+  useEffect(() => {
+    if (navigated) return;
+    if (isLoading) return;
 
+    const timer = setTimeout(navigate, 2800);
     return () => clearTimeout(timer);
-  }, [isLoading]);
+  }, [isLoading, isOnboarded, user, navigated]);
+
+  useEffect(() => {
+    const fallback = setTimeout(navigate, 8000);
+    return () => clearTimeout(fallback);
+  }, [navigated, isOnboarded, user]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 

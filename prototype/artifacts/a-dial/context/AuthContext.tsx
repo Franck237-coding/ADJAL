@@ -18,7 +18,7 @@ interface AuthContextType {
   isGuest: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: { nom: string; email: string; telephone: string }) => Promise<void>;
+  register: (data: { nom: string; email: string; telephone: string; role: Role }) => Promise<void>;
   setUserRole: (role: Role) => Promise<void>;
   logout: () => Promise<void>;
   continueAsGuest: () => void;
@@ -72,17 +72,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ]);
   };
 
-  const register = async (data: { nom: string; email: string; telephone: string }) => {
+  const register = async (data: { nom: string; email: string; telephone: string; role: Role }) => {
     const mockUser: User = {
       id: Date.now().toString() + Math.random().toString(36).slice(2, 9),
       nom: data.nom,
       email: data.email,
       telephone: data.telephone,
-      role: null,
+      role: data.role,
     };
     setUser(mockUser);
+    setRole(data.role);
     setIsGuest(false);
-    await AsyncStorage.setItem('@adial:user', JSON.stringify(mockUser));
+    await Promise.all([
+      AsyncStorage.setItem('@adial:user', JSON.stringify(mockUser)),
+      AsyncStorage.setItem('@adial:role', data.role),
+    ]);
   };
 
   const setUserRole = async (newRole: Role) => {

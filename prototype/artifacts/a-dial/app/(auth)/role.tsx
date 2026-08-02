@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '@/context/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 
@@ -43,7 +42,6 @@ const ROLES = [
 
 export default function RoleScreen() {
   const router = useRouter();
-  const { setUserRole } = useAuth();
   const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState<'ACHETEUR' | 'AGRICULTEUR' | null>(null);
   const [loading, setLoading] = useState(false);
@@ -52,11 +50,8 @@ export default function RoleScreen() {
 
   const handleStart = async () => {
     if (!selected) return;
-    setLoading(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await setUserRole(selected);
-    setLoading(false);
-    router.replace('/(app)/');
+    router.push({ pathname: '/(auth)/register', params: { role: selected } });
   };
 
   return (
