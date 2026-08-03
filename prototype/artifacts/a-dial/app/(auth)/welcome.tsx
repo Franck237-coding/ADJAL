@@ -25,7 +25,7 @@ export default function WelcomeScreen() {
 
   const handleGuest = () => {
     continueAsGuest();
-    router.replace('/(app)/');
+    router.replace('/(app)/' as any);
   };
 
   return (
@@ -62,7 +62,7 @@ export default function WelcomeScreen() {
 
           <TouchableOpacity
             style={styles.btnPrimary}
-            onPress={() => router.push('/(auth)/register')}
+            onPress={() => router.push('/(auth)/role')}
             activeOpacity={0.85}
           >
             <Text style={styles.btnPrimaryText}>Créer un compte gratuit</Text>

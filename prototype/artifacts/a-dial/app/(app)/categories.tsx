@@ -13,6 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useCart } from '@/context/CartContext';
 
 const CATS = ['Tout', 'Fruits', 'Légumes', 'Céréales', 'Tubercules', 'Épices'];
 
@@ -29,6 +30,7 @@ const PRODUCTS = [
 
 export default function CategoriesScreen() {
   const insets = useSafeAreaInsets();
+  const { addItem } = useCart();
   const [activeCat, setActiveCat] = useState('Tout');
   const [search, setSearch] = useState('');
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -104,9 +106,9 @@ export default function CategoriesScreen() {
               </View>
               <View style={styles.cardBottom}>
                 <Text style={styles.price}>{item.prix} F<Text style={styles.unit}>/{item.unite}</Text></Text>
-                <TouchableOpacity style={styles.addBtn}>
-                  <Ionicons name="add" size={18} color="#fff" />
-                </TouchableOpacity>
+                 <TouchableOpacity style={styles.addBtn} onPress={() => addItem({ id: item.id, name: item.nom, price: item.prix, unite: item.unite, img: item.img })}>
+                   <Ionicons name="add" size={18} color="#fff" />
+                 </TouchableOpacity>
               </View>
             </View>
           </TouchableOpacity>

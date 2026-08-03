@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '@/context/AuthContext';
+import { useCart } from '@/context/CartContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CATEGORIES = [
@@ -49,6 +50,7 @@ const RECOMMENDED = [
 
 export default function HomeScreen() {
   const { user, isGuest } = useAuth();
+  const { addItem, count } = useCart();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
@@ -84,6 +86,14 @@ export default function HomeScreen() {
               <>
                 <TouchableOpacity style={styles.iconBtn}>
                   <Ionicons name="notifications-outline" size={22} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.iconBtn} onPress={() => router.push('/(app)/(inner)/cart')}>
+                  <Ionicons name="cart-outline" size={22} color="#fff" />
+                  {count > 0 && (
+                    <View style={styles.cartBadge}>
+                      <Text style={styles.cartBadgeText}>{count}</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.avatar}>
                   <Text style={styles.avatarText}>{firstName[0]}</Text>
@@ -195,9 +205,9 @@ export default function HomeScreen() {
                 </View>
                 <View style={styles.featPriceRow}>
                   <Text style={styles.featPrice}>{item.prix} F<Text style={styles.featUnit}>/{item.unite}</Text></Text>
-                  <TouchableOpacity style={styles.addBtn}>
-                    <Ionicons name="add" size={18} color="#fff" />
-                  </TouchableOpacity>
+                   <TouchableOpacity style={styles.addBtn} onPress={() => addItem({ id: item.id, name: item.nom, price: item.prix, unite: item.unite, img: item.img })}>
+                     <Ionicons name="add" size={18} color="#fff" />
+                   </TouchableOpacity>
                 </View>
               </View>
             )}
@@ -250,13 +260,13 @@ export default function HomeScreen() {
                     <Text style={styles.ratingText}>{p.note}</Text>
                   </View>
                 </View>
-                <View style={styles.recRight}>
-                  <Text style={styles.recPrice}>{p.prix} F</Text>
-                  <Text style={styles.recUnit}>/{p.unite}</Text>
-                  <TouchableOpacity style={styles.addSmallBtn}>
-                    <Ionicons name="add" size={16} color="#fff" />
-                  </TouchableOpacity>
-                </View>
+                 <View style={styles.recRight}>
+                   <Text style={styles.recPrice}>{p.prix} F</Text>
+                   <Text style={styles.recUnit}>/{p.unite}</Text>
+                    <TouchableOpacity style={styles.addSmallBtn} onPress={() => addItem({ id: p.id, name: p.nom, price: p.prix, unite: p.unite, img: p.img })}>
+                      <Ionicons name="add" size={16} color="#fff" />
+                    </TouchableOpacity>
+                 </View>
               </View>
             ))}
           </View>
@@ -278,9 +288,11 @@ const styles = StyleSheet.create({
   guestBadge: { backgroundColor: '#F97316', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20 },
   guestBadgeText: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#fff' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  iconBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  iconBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center', position: 'relative' },
   avatar: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#3D8B44', alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 15, fontFamily: 'Inter_700Bold', color: '#fff' },
+  cartBadge: { position: 'absolute', top: 2, right: 2, backgroundColor: '#F97316', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },
+  cartBadgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', color: '#fff' },
   signupBtn: { backgroundColor: '#F97316', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
   signupBtnText: { fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },

@@ -35,7 +35,7 @@ export default function LoginScreen() {
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       await login(email, password);
-      router.replace('/(app)/');
+      router.replace('/(app)/' as any);
     } catch {
       setError('Email ou mot de passe incorrect.');
     } finally {
