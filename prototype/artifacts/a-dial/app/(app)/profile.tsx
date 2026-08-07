@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Platform,
   Switch,
   Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 
 function AccessDenied() {
   const router = useRouter();
@@ -63,6 +65,24 @@ export default function ProfileScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
   const firstName = user?.nom?.split(' ')[0] ?? 'A';
+  const [profileImage, setProfileImage] = useState<string | null>(null);
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission refusée', 'Accès à la galerie nécessaire pour changer la photo');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets[0].uri) {
+      setProfileImage(result.assets[0].uri);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert('Déconnexion', 'Voulez-vous vraiment vous déconnecter ?', [
@@ -99,12 +119,16 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={{ paddingBottom: botPad + 70 }} showsVerticalScrollIndicator={false}>
         {/* Profile card */}
         <View style={styles.profileCard}>
-          <View style={styles.avatarLarge}>
-            <Text style={styles.avatarLargeText}>{firstName[0]}</Text>
-            <TouchableOpacity style={styles.editAvatar}>
-              <Ionicons name="pencil" size={12} color="#fff" />
+          <TouchableOpacity onPress={pickImage} style={styles.avatarLarge}>
+            {profileImage ? (
+              <Image source={{ uri: profileImage }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarLargeText}>{firstName[0]}</Text>
+            )}
+            <TouchableOpacity style={styles.editAvatar} onPress={pickImage}>
+              <Ionicons name="camera" size={12} color="#fff" />
             </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{user.nom}</Text>
             <Text style={styles.profileRole}>{role === 'AGRICULTEUR' ? 'Agriculteur' : 'Acheteur'} · Yaoundé</Text>
@@ -169,7 +193,8 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 },
   headerTitle: { fontSize: 22, fontFamily: 'Inter_700Bold', color: '#fff' },
   profileCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: '#fff', marginHorizontal: 18, marginTop: 16, borderRadius: 18, padding: 16 },
-  avatarLarge: { width: 64, height: 64, borderRadius: 20, backgroundColor: '#256B2E', alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  avatarLarge: { width: 64, height: 64, borderRadius: 20, backgroundColor: '#256B2E', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' },
+  avatarImage: { width: 64, height: 64, borderRadius: 20 },
   avatarLargeText: { fontSize: 26, fontFamily: 'Inter_700Bold', color: '#fff' },
   editAvatar: { position: 'absolute', bottom: -2, right: -2, width: 22, height: 22, borderRadius: 11, backgroundColor: '#F97316', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
   profileInfo: { flex: 1, gap: 3 },

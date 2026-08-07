@@ -28,11 +28,7 @@ export default function AppLayout() {
         },
         tabBarBackground: () =>
           isIOS ? (
-            <BlurView
-              intensity={95}
-              tint={isDark ? 'dark' : 'extraLight'}
-              style={StyleSheet.absoluteFill}
-            />
+            <BlurView intensity={95} tint={isDark ? 'dark' : 'extraLight'} style={StyleSheet.absoluteFill} />
           ) : isWeb ? (
             <View style={[StyleSheet.absoluteFill, { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB' }]} />
           ) : null,
@@ -43,7 +39,7 @@ export default function AppLayout() {
         options={{
           title: 'Accueil',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'home' : 'home-outline'} size={23} color={color} />
+            <Ionicons name={focused ? 'home' : 'home-outline'} size={26} color={color} />
           ),
         }}
       />
@@ -52,7 +48,7 @@ export default function AppLayout() {
         options={{
           title: 'Catégories',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'grid' : 'grid-outline'} size={22} color={color} />
+            <Ionicons name={focused ? 'grid' : 'grid-outline'} size={26} color={color} />
           ),
         }}
       />
@@ -61,10 +57,8 @@ export default function AppLayout() {
         options={{
           title: 'Commandes',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'bag' : 'bag-outline'} size={23} color={color} />
+            <Ionicons name={focused ? 'bag' : 'bag-outline'} size={26} color={color} />
           ),
-          tabBarBadge: 2,
-          tabBarBadgeStyle: { backgroundColor: '#F97316', fontSize: 10 },
         }}
       />
       <Tabs.Screen
@@ -72,10 +66,8 @@ export default function AppLayout() {
         options={{
           title: 'Messages',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'chatbubble' : 'chatbubble-outline'} size={22} color={color} />
+            <Ionicons name={focused ? 'chatbubble' : 'chatbubble-outline'} size={26} color={color} />
           ),
-          tabBarBadge: 1,
-          tabBarBadgeStyle: { backgroundColor: '#F97316', fontSize: 10 },
         }}
       />
       <Tabs.Screen
@@ -83,7 +75,7 @@ export default function AppLayout() {
         options={{
           title: 'Profil',
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'person' : 'person-outline'} size={22} color={color} />
+            <Ionicons name={focused ? 'person' : 'person-outline'} size={26} color={color} />
           ),
         }}
       />

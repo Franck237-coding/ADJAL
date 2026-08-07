@@ -54,6 +54,7 @@ const denied = StyleSheet.create({
 
 export default function MessagesScreen() {
   const { user, isGuest } = useAuth();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
@@ -95,7 +96,12 @@ export default function MessagesScreen() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: botPad + 70 }} showsVerticalScrollIndicator={false}>
         {filtered.map((conv) => (
-          <TouchableOpacity key={conv.id} style={styles.convRow} activeOpacity={0.75}>
+          <TouchableOpacity
+            key={conv.id}
+            style={styles.convRow}
+            activeOpacity={0.75}
+            onPress={() => router.push({ pathname: '/(app)/(inner)/chat', params: { id: String(conv.id) } })}
+          >
             <View style={[styles.avatar, { backgroundColor: conv.color }]}>
               <Text style={styles.avatarText}>{conv.init}</Text>
               {conv.nonLu && <View style={styles.unreadDot} />}
@@ -127,17 +133,17 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 13, color: 'rgba(255,255,255,0.75)', fontFamily: 'Inter_400Regular', marginBottom: 8 },
   searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, gap: 10 },
   searchInput: { flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular', color: '#1A1A1A' },
-  convRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 18, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#F0F0F0', backgroundColor: '#fff' },
-  avatar: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  avatarText: { fontSize: 18, fontFamily: 'Inter_700Bold', color: '#fff' },
-  unreadDot: { position: 'absolute', bottom: 2, right: 2, width: 12, height: 12, borderRadius: 6, backgroundColor: '#F97316', borderWidth: 2, borderColor: '#fff' },
+  convRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 18, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0', backgroundColor: '#fff' },
+  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  avatarText: { fontSize: 20, fontFamily: 'Inter_700Bold', color: '#fff' },
+  unreadDot: { position: 'absolute', bottom: 2, right: 2, width: 14, height: 14, borderRadius: 7, backgroundColor: '#F97316', borderWidth: 2, borderColor: '#fff' },
   convInfo: { flex: 1 },
   convTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  convName: { fontSize: 15, fontFamily: 'Inter_600SemiBold', color: '#1A1A1A' },
+  convName: { fontSize: 16, fontFamily: 'Inter_600SemiBold', color: '#1A1A1A' },
   convTime: { fontSize: 12, color: '#9CA3AF', fontFamily: 'Inter_400Regular' },
   convRole: { fontSize: 12, color: '#256B2E', fontFamily: 'Inter_500Medium', marginTop: 1 },
-  convMsg: { fontSize: 13, color: '#6B7280', fontFamily: 'Inter_400Regular', marginTop: 2 },
+  convMsg: { fontSize: 14, color: '#6B7280', fontFamily: 'Inter_400Regular', marginTop: 2 },
   convMsgBold: { fontFamily: 'Inter_600SemiBold', color: '#374151' },
-  unreadBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#F97316', alignItems: 'center', justifyContent: 'center' },
-  unreadText: { fontSize: 10, fontFamily: 'Inter_700Bold', color: '#fff' },
+  unreadBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#F97316', alignItems: 'center', justifyContent: 'center' },
+  unreadText: { fontSize: 11, fontFamily: 'Inter_700Bold', color: '#fff' },
 });
