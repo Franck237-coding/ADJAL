@@ -2,3 +2,5 @@ packages:
   - admin
   - mobile
   - api-contract
+allowBuilds:
+  esbuild: false

@@ -18,7 +18,7 @@
     <description>Spring Boot backend for the A DJAL Cameroon agricultural marketplace</description>
 
     <properties>
-        <java.version>19</java.version>
+        <java.version>17</java.version>
         <springdoc.version>2.8.6</springdoc.version>
         <bouncycastle.version>1.78.1</bouncycastle.version>
     </properties>
