@@ -1,0 +1,1029 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.2.1
+  description: Secure API for the A DJAL Cameroon agricultural marketplace.
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+  - name: auth
+  - name: profile
+  - name: recommendations
+  - name: products
+  - name: orders
+  - name: admin
+  - name: categories
+  - name: messaging
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      responses:
+        "200":
+          description: Healthy
+          content: { application/json: { schema: { $ref: "#/components/schemas/HealthStatus" } } }
+  /auth/register:
+    post:
+      operationId: registerAccount
+      tags: [auth]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RegistrationInput" } } }
+      responses:
+        "201":
+          description: Account created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Session" } } }
+        "409": { description: Email already used }
+  /auth/login:
+    post:
+      operationId: loginAccount
+      tags: [auth]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CredentialsInput" } } }
+      responses:
+        "200":
+          description: Signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Session" } } }
+        "401": { description: Invalid credentials }
+  /auth/logout:
+    post:
+      operationId: logoutAccount
+      tags: [auth]
+      responses:
+        "204": { description: Signed out }
+  /auth/me:
+    get:
+      operationId: getCurrentAccount
+      tags: [auth]
+      responses:
+        "200":
+          description: Current account
+          content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } }
+        "401": { description: Unauthenticated }
+  /auth/password-reset:
+    post:
+      operationId: requestPasswordReset
+      tags: [auth]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EmailInput" } } }
+      responses:
+        "202": { description: Request accepted without revealing account existence }
+  /auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      tags: [auth]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PasswordResetConfirmationInput" } } }
+      responses:
+        "204": { description: Password reset and active sessions revoked }
+        "400": { description: "Invalid, expired, or previously used reset credential" }
+  /profile:
+    patch:
+      operationId: updateProfile
+      tags: [profile]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProfileUpdate" } } }
+      responses:
+        "200":
+          description: Updated profile
+          content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } }
+  /interests:
+    get:
+      operationId: getInterests
+      tags: [profile]
+      responses:
+        "200":
+          description: Saved interests
+          content: { application/json: { schema: { $ref: "#/components/schemas/Interests" } } }
+    put:
+      operationId: saveInterests
+      tags: [profile]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Interests" } } }
+      responses:
+        "200":
+          description: Saved interests
+          content: { application/json: { schema: { $ref: "#/components/schemas/Interests" } } }
+  /categories:
+    get:
+      operationId: getCategories
+      tags: [categories]
+      responses:
+        "200":
+          description: Active marketplace categories
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Category" } } } }
+  /interactions:
+    post:
+      operationId: recordInteraction
+      tags: [recommendations]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/InteractionInput" } } }
+      responses:
+        "204": { description: Interaction recorded }
+  /recommendations:
+    get:
+      operationId: getRecommendations
+      tags: [recommendations]
+      responses:
+        "200":
+          description: Ranked products
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Recommendation" } } } }
+  /accounts:
+    get:
+      operationId: searchAccounts
+      tags: [messaging]
+      parameters:
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Active accounts available for a conversation
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Account" } } } }
+        "401": { description: Unauthenticated }
+  /account/me:
+    get:
+      operationId: getAccountMe
+      tags: [users]
+      responses:
+        "200":
+          description: Current account
+          content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } }
+        "401": { description: Unauthenticated }
+  /account/profile:
+    patch:
+      operationId: updateAccountProfile
+      tags: [users]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProfileUpdate" } } }
+      responses:
+        "200":
+          description: Updated profile
+          content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } }
+  /account:
+    delete:
+      operationId: deleteAccount
+      tags: [users]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/DeleteAccountInput" } } }
+      responses:
+        "204": { description: Account deleted }
+        "401": { description: Incorrect current password }
+        "409": { description: Administrator account must be managed separately }
+  /conversations:
+    get:
+      operationId: getConversations
+      tags: [messaging]
+      responses:
+        "200":
+          description: Conversations for the current account
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Conversation" } } } }
+        "401": { description: Unauthenticated }
+    post:
+      operationId: createConversation
+      tags: [messaging]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateConversationInput" } } }
+      responses:
+        "201":
+          description: Conversation created or reused
+          content: { application/json: { schema: { $ref: "#/components/schemas/Conversation" } } }
+        "403": { description: Cannot create a conversation with this account }
+  /conversations/{id}/messages:
+    get:
+      operationId: getMessages
+      tags: [messaging]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Messages in chronological order
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Message" } } } }
+        "403": { description: Conversation participant required }
+    post:
+      operationId: sendMessage
+      tags: [messaging]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SendMessageInput" } } }
+      responses:
+        "201":
+          description: Persisted message
+          content: { application/json: { schema: { $ref: "#/components/schemas/Message" } } }
+        "403": { description: Conversation participant required }
+  /products:
+    post:
+      operationId: createProduct
+      tags: [products]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateProductInput" } } }
+      responses:
+        "201":
+          description: Product listing created (pending moderation)
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminProduct" } } }
+        "400": { description: Invalid input }
+        "401": { description: Unauthenticated }
+        "403": { description: Farmer role required }
+    get:
+      operationId: getProducts
+      tags: [products]
+      responses:
+        "200":
+          description: Saleable published, in-stock, unexpired listings
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MarketProduct" } } } }
+        "401": { description: Unauthenticated }
+        "403": { description: Not available to administrators }
+  /products/mine:
+    get:
+      operationId: getMyProducts
+      tags: [products]
+      responses:
+        "200":
+          description: All listings owned by the authenticated farmer (any status)
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AdminProduct" } } } }
+        "401": { description: Unauthenticated }
+        "403": { description: Farmer role required }
+  /products/{id}:
+    get:
+      operationId: getProduct
+      tags: [products]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Product detail
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminProduct" } } }
+        "404": { description: Product not found }
+    patch:
+      operationId: updateMyProduct
+      tags: [products]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateProductInput" } } }
+      responses:
+        "200":
+          description: Updated pending listing
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminProduct" } } }
+        "400": { description: Invalid input }
+        "401": { description: Unauthenticated }
+        "403": { description: Not owner or not a farmer }
+        "404": { description: Product not found }
+        "409": { description: Only pending listings may be edited }
+    delete:
+      operationId: deleteMyProduct
+      tags: [products]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Listing removed }
+        "401": { description: Unauthenticated }
+        "403": { description: Not owner or not a farmer }
+        "404": { description: Product not found }
+        "409": { description: Only pending listings may be deleted }
+  /catalog/products:
+    get:
+      operationId: searchProducts
+      tags: [products]
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: city, in: query, schema: { type: string } }
+        - { name: minPrice, in: query, schema: { type: number } }
+        - { name: maxPrice, in: query, schema: { type: number } }
+      responses:
+        "200":
+          description: Filtered product catalog
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MarketProduct" } } } }
+  /checkout:
+    post:
+      operationId: checkout
+      tags: [orders]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CheckoutInput" } } }
+      responses:
+        "201":
+          description: All orders created atomically (pending)
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Order" } } } }
+        "400": { description: Invalid input }
+        "401": { description: Unauthenticated }
+        "403": { description: Buyer role required }
+        "404": { description: A product was not available }
+        "409": { description: Insufficient stock for a line }
+  /orders:
+    post:
+      operationId: createOrder
+      tags: [orders]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateOrderInput" } } }
+      responses:
+        "201":
+          description: Order created (pending)
+          content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } }
+        "400": { description: Invalid input }
+        "401": { description: Unauthenticated }
+        "403": { description: Buyer role required }
+        "404": { description: Product not available }
+        "409": { description: Insufficient stock }
+    get:
+      operationId: getOrders
+      tags: [orders]
+      responses:
+        "200":
+          description: Orders visible to the caller
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Order" } } } }
+        "401": { description: Unauthenticated }
+        "403": { description: Not available to administrators }
+  /orders/{id}/status:
+    patch:
+      operationId: updateOrderStatus
+      tags: [orders]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/OrderStatusUpdate" } } }
+      responses:
+        "200":
+          description: Order updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } }
+        "400": { description: Invalid input }
+        "401": { description: Unauthenticated }
+        "403": { description: Not permitted for this account }
+        "404": { description: Order not found }
+        "409": { description: Invalid state transition }
+  /orders/{id}/history:
+    get:
+      operationId: getOrderHistory
+      tags: [orders]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Order status history
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/OrderHistory" } } } }
+  /reviews:
+    post:
+      operationId: createReview
+      tags: [reviews]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReviewInput" } } }
+      responses:
+        "201":
+          description: Review created after delivery
+          content: { application/json: { schema: { $ref: "#/components/schemas/Review" } } }
+  /products/{id}/reviews:
+    get:
+      operationId: getProductReviews
+      tags: [reviews]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Product reviews
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Review" } } } }
+  /payments:
+    get:
+      operationId: getPayments
+      tags: [payments]
+      responses:
+        "200":
+          description: Payments for the current account
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+    post:
+      operationId: createPayment
+      tags: [payments]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PaymentInput" } } }
+      responses:
+        "201":
+          description: Demonstration payment recorded
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+  /market/prices:
+    get:
+      operationId: getMarketPrices
+      tags: [market]
+      parameters:
+        - { name: productName, in: query, schema: { type: string } }
+        - { name: city, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Market prices
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MarketPrice" } } } }
+    post:
+      operationId: createMarketPrice
+      tags: [market, admin]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/MarketPriceInput" } } }
+      responses:
+        "201":
+          description: Market price recorded
+          content: { application/json: { schema: { $ref: "#/components/schemas/MarketPrice" } } }
+  /market/alerts:
+    get:
+      operationId: getMarketAlerts
+      tags: [market]
+      responses:
+        "200":
+          description: Active market alerts
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MarketAlert" } } } }
+  /notifications:
+    get:
+      operationId: getNotifications
+      tags: [notifications]
+      responses:
+        "200":
+          description: Notifications for the current account
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Notification" } } } }
+  /notifications/{id}/read:
+    patch:
+      operationId: markNotificationRead
+      tags: [notifications]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Notification marked as read }
+  /admin/summary:
+    get:
+      operationId: getAdminSummary
+      tags: [admin]
+      responses:
+        "200":
+          description: Marketplace summary
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminSummary" } } }
+        "403": { description: Administrator required }
+  /admin/users:
+    get:
+      operationId: getAdminUsers
+      tags: [admin]
+      responses:
+        "200":
+          description: Accounts
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Account" } } } }
+  /admin/users/{id}/status:
+    patch:
+      operationId: updateAdminUserStatus
+      tags: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AccountStatusUpdate" } } }
+      responses:
+        "200":
+          description: Account updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } }
+  /admin/users/{id}:
+    delete:
+      operationId: deleteAdminUser
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: User deleted }
+  /admin/users/{id}/role:
+    patch:
+      operationId: updateAdminUserRole
+      tags: [admin]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/RoleUpdate" } } }
+      responses:
+        "200":
+          description: Role updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Account" } } }
+  /admin/products:
+    get:
+      operationId: getAdminProducts
+      tags: [admin]
+      responses:
+        "200":
+          description: Products awaiting moderation or published
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AdminProduct" } } } }
+  /admin/products/{id}/moderation:
+    patch:
+      operationId: updateProductModeration
+      tags: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ProductModerationUpdate" } } }
+      responses:
+        "200":
+          description: Product updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminProduct" } } }
+  /admin/categories:
+    get:
+      operationId: getAdminCategories
+      tags: [categories, admin]
+      responses:
+        "200":
+          description: All marketplace categories
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Category" } } } }
+    post:
+      operationId: createCategory
+      tags: [categories, admin]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCategoryInput" } } }
+      responses:
+        "201":
+          description: Category created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Category" } } }
+        "409": { description: Category slug already exists }
+  /admin/categories/{id}:
+    patch:
+      operationId: updateAdminCategory
+      tags: [categories, admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateCategoryInput" } } }
+      responses:
+        "200":
+          description: Category updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Category" } } }
+    delete:
+      operationId: deleteAdminCategory
+      tags: [categories, admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Category deleted }
+        "409": { description: Category is referenced by products }
+  /admin/reviews:
+    get:
+      operationId: getAdminReviews
+      tags: [admin, reviews]
+      responses:
+        "200":
+          description: All reviews
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Review" } } } }
+  /admin/reviews/{id}:
+    delete:
+      operationId: deleteAdminReview
+      tags: [admin, reviews]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Review removed }
+  /admin/payments:
+    get:
+      operationId: getAdminPayments
+      tags: [admin, payments]
+      responses:
+        "200":
+          description: All payments
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+  /admin/payments/{id}/status:
+    patch:
+      operationId: updateAdminPaymentStatus
+      tags: [admin, payments]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PaymentStatusUpdate" } } }
+      responses:
+        "200":
+          description: Payment status updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties: { status: { type: string } }
+    Category:
+      type: object
+      required: [id, name, slug, active, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        active: { type: boolean }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    CreateCategoryInput:
+      type: object
+      required: [name, slug]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        slug: { type: string, minLength: 2, maxLength: 80, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$' }
+        active: { type: boolean }
+    UpdateCategoryInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 80 }
+        slug: { type: string, minLength: 2, maxLength: 80, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$' }
+        active: { type: boolean }
+    Role:
+      type: string
+      enum: [buyer, farmer, admin]
+    Account:
+      type: object
+      required: [id, name, email, phone, role, city, country, status, interests]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string, pattern: '^\+237[0-9]{9}$' }
+        role: { $ref: "#/components/schemas/Role" }
+        city: { type: string }
+        country: { type: string, enum: [CM] }
+        status: { type: string, enum: [active, suspended] }
+        avatarUrl: { type: ["string", "null"] }
+        interests: { type: array, items: { type: string } }
+        createdAt: { type: string }
+        latitude: { type: ["number", "null"] }
+        longitude: { type: ["number", "null"] }
+    Session:
+      type: object
+      required: [accessToken, account]
+      properties:
+        accessToken: { type: string }
+        account: { $ref: "#/components/schemas/Account" }
+    RegistrationInput:
+      type: object
+      required: [name, email, password, phone, city, role]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 120 }
+        email: { type: string }
+        password: { type: string, minLength: 10, maxLength: 128 }
+        phone: { type: string, pattern: '^\+237[0-9]{9}$' }
+        city: { type: string, minLength: 2, maxLength: 80 }
+        role: { type: string, enum: [buyer, farmer] }
+    CredentialsInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string }
+        password: { type: string, minLength: 1, maxLength: 128 }
+    EmailInput:
+      type: object
+      required: [email]
+      properties: { email: { type: string } }
+    PasswordResetConfirmationInput:
+      type: object
+      required: [token, password]
+      properties:
+        token: { type: string, minLength: 40, maxLength: 128 }
+        password: { type: string, minLength: 10, maxLength: 128 }
+    ProfileUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 120 }
+        phone: { type: string, pattern: '^\+237[0-9]{9}$' }
+        city: { type: string, minLength: 2, maxLength: 80 }
+        avatarUrl: { type: ["string", "null"] }
+        latitude: { type: ["number", "null"] }
+        longitude: { type: ["number", "null"] }
+    DeleteAccountInput:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, minLength: 1, maxLength: 128 }
+    Interests:
+      type: object
+      required: [interests]
+      properties:
+        interests:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items: { type: string, enum: [fruits, legumes, tubercules, cereales, responsible, daily-offers] }
+    InteractionInput:
+      type: object
+      required: [productId, type]
+      properties:
+        productId: { type: string }
+        type: { type: string, enum: [view, search, purchase] }
+    Recommendation:
+      type: object
+      required: [product, score, reasons]
+      properties:
+        product: { $ref: "#/components/schemas/AdminProduct" }
+        score: { type: number }
+        reasons: { type: array, items: { type: string } }
+    AdminProduct:
+      type: object
+      required: [id, name, category, city, price, unit, stock, status, harvestDate]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        city: { type: string }
+        price: { type: number }
+        unit: { type: string }
+        stock: { type: number }
+        status: { type: string, enum: [pending, published, removed] }
+        harvestDate: { type: string }
+        shelfLifeDays: { type: number }
+        ownerName: { type: string }
+        description: { type: ["string", "null"] }
+        imageUrl: { type: ["string", "null"] }
+        latitude: { type: ["number", "null"] }
+        longitude: { type: ["number", "null"] }
+    MarketProduct:
+      type: object
+      required: [id, name, category, city, price, unit, stock, status, harvestDate, ownerName]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        city: { type: string }
+        price: { type: number }
+        unit: { type: string }
+        stock: { type: number }
+        status: { type: string, enum: [published] }
+        harvestDate: { type: string }
+        shelfLifeDays: { type: number }
+        ownerName: { type: string }
+        description: { type: ["string", "null"] }
+        imageUrl: { type: ["string", "null"] }
+        latitude: { type: ["number", "null"] }
+        longitude: { type: ["number", "null"] }
+    CreateProductInput:
+      type: object
+      required: [name, category, price, unit, stock, city, harvestDate, description, imageUrl]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 120 }
+        category: { type: string, minLength: 2, maxLength: 80 }
+        price: { type: number, exclusiveMinimum: 0 }
+        unit: { type: string, minLength: 1, maxLength: 40 }
+        stock: { type: number, minimum: 0 }
+        city: { type: string, minLength: 2, maxLength: 80 }
+        harvestDate: { type: string }
+        shelfLifeDays: { type: number, minimum: 1 }
+        description: { type: string, maxLength: 4000 }
+        imageUrl: { type: string, maxLength: 1000 }
+        latitude: { type: number }
+        longitude: { type: number }
+    UpdateProductInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 2, maxLength: 120 }
+        category: { type: string, minLength: 2, maxLength: 80 }
+        price: { type: number, exclusiveMinimum: 0 }
+        unit: { type: string, minLength: 1, maxLength: 40 }
+        stock: { type: number, minimum: 0 }
+        city: { type: string, minLength: 2, maxLength: 80 }
+        harvestDate: { type: string }
+        shelfLifeDays: { type: number, minimum: 1 }
+        description: { type: string, maxLength: 4000 }
+        imageUrl: { type: string, maxLength: 1000 }
+        latitude: { type: number }
+        longitude: { type: number }
+    CreateOrderInput:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: { type: string }
+        quantity: { type: number, exclusiveMinimum: 0 }
+        city: { type: string, minLength: 2, maxLength: 80 }
+    CheckoutLine:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: { type: string }
+        quantity: { type: number, exclusiveMinimum: 0 }
+    CheckoutInput:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CheckoutLine" }
+        city: { type: string, minLength: 2, maxLength: 80 }
+    OrderStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [confirmed, delivered, cancelled] }
+    OrderHistory:
+      type: object
+      required: [id, orderId, status, changedBy, createdAt]
+      properties:
+        id: { type: string }
+        orderId: { type: string }
+        status: { type: string }
+        changedBy: { type: string }
+        createdAt: { type: string }
+    ReviewInput:
+      type: object
+      required: [productId, orderId, rating]
+      properties:
+        productId: { type: string }
+        orderId: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, maxLength: 2000 }
+    Review:
+      type: object
+      required: [id, productId, orderId, reviewerId, reviewerName, rating, status, createdAt]
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        orderId: { type: string }
+        reviewerId: { type: string }
+        reviewerName: { type: string }
+        rating: { type: integer }
+        comment: { type: ["string", "null"] }
+        status: { type: string, enum: [published, removed] }
+        createdAt: { type: string }
+    PaymentInput:
+      type: object
+      required: [orderId, method]
+      properties:
+        orderId: { type: string }
+        method: { type: string, maxLength: 40 }
+    PaymentStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, paid, failed, refunded] }
+    Payment:
+      type: object
+      required: [id, orderId, payerId, amount, currency, method, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        orderId: { type: string }
+        payerId: { type: string }
+        amount: { type: number }
+        currency: { type: string, enum: [XAF] }
+        method: { type: string }
+        providerReference: { type: ["string", "null"] }
+        status: { type: string, enum: [pending, paid, failed, refunded] }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        paidAt: { type: ["string", "null"] }
+    MarketPriceInput:
+      type: object
+      required: [productName, city, unit, price]
+      properties:
+        productName: { type: string, maxLength: 180 }
+        category: { type: string, maxLength: 120 }
+        city: { type: string, maxLength: 120 }
+        region: { type: string, maxLength: 120 }
+        unit: { type: string, maxLength: 40 }
+        price: { type: number, exclusiveMinimum: 0 }
+    MarketPrice:
+      type: object
+      required: [id, productName, city, unit, price, recordedAt]
+      properties:
+        id: { type: string }
+        productName: { type: string }
+        category: { type: ["string", "null"] }
+        city: { type: string }
+        region: { type: ["string", "null"] }
+        unit: { type: string }
+        price: { type: number }
+        recordedAt: { type: string }
+    MarketAlert:
+      type: object
+      required: [id, productName, title, message, active, createdAt]
+      properties:
+        id: { type: string }
+        accountId: { type: ["string", "null"] }
+        productName: { type: string }
+        city: { type: ["string", "null"] }
+        title: { type: string }
+        message: { type: string }
+        variationPercent: { type: ["number", "null"] }
+        active: { type: boolean }
+        createdAt: { type: string }
+    Notification:
+      type: object
+      required: [id, accountId, type, title, body, createdAt]
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        type: { type: string }
+        title: { type: string }
+        body: { type: string }
+        resourceType: { type: ["string", "null"] }
+        resourceId: { type: ["string", "null"] }
+        readAt: { type: ["string", "null"] }
+        createdAt: { type: string }
+    RoleUpdate:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+    Order:
+      type: object
+      required: [id, productId, productName, buyerId, sellerId, quantity, unitPrice, status, city, country, createdAt]
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        productName: { type: string }
+        buyerId: { type: string }
+        sellerId: { type: string }
+        quantity: { type: number }
+        unitPrice: { type: number }
+        status: { type: string, enum: [pending, confirmed, delivered, cancelled] }
+        city: { type: string }
+        country: { type: string, enum: [CM] }
+        createdAt: { type: string }
+    AccountStatusUpdate:
+      type: object
+      required: [status]
+      properties: { status: { type: string, enum: [active, suspended] } }
+    ProductModerationUpdate:
+      type: object
+      required: [status]
+      properties: { status: { type: string, enum: [published, removed] } }
+    AdminSummary:
+      type: object
+      required: [userCount, productCount, transactionCount, pendingProductCount]
+      properties:
+        userCount: { type: number }
+        productCount: { type: number }
+        transactionCount: { type: number }
+        pendingProductCount: { type: number }
+    CreateConversationInput:
+      type: object
+      required: [otherUserId]
+      properties:
+        otherUserId: { type: string }
+    Conversation:
+      type: object
+      required: [id, otherUserId, otherUserName, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        otherUserId: { type: string }
+        otherUserName: { type: string }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+    SendMessageInput:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 4000 }
+    Message:
+      type: object
+      required: [id, conversationId, senderId, senderName, body, createdAt]
+      properties:
+        id: { type: string }
+        conversationId: { type: string }
+        senderId: { type: string }
+        senderName: { type: string }
+        body: { type: string }
+        createdAt: { type: string }
+        readAt: { type: ["string", "null"] }

@@ -1,0 +1,14 @@
+{
+  "name": "@adjal/frontend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "codegen": "pnpm --filter @adjal/api-contract run codegen",
+    "typecheck": "pnpm --filter @adjal/api-contract run build && pnpm --filter @adjal/admin run typecheck && pnpm --filter @adjal/mobile run typecheck",
+    "build": "pnpm --filter @adjal/api-contract run build && pnpm --filter @adjal/admin run build && pnpm --filter @adjal/mobile run build",
+    "dev:admin": "pnpm --filter @adjal/api-contract run build && pnpm --filter @adjal/admin run dev",
+    "dev:mobile": "pnpm --filter @adjal/mobile run dev",
+    "dev:mobile:go": "pnpm --filter @adjal/mobile run dev:go",
+    "dev:mobile:lan": "pnpm --filter @adjal/mobile run dev:go"
+  }
+}

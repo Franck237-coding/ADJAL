@@ -1,0 +1,5 @@
+ALTER TABLE categories
+    ADD COLUMN IF NOT EXISTS image_url TEXT NULL AFTER slug;
+
+ALTER TABLE accounts
+    ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE AFTER avatar_url;

@@ -1,0 +1,44 @@
+{
+  "name": "@adjal/api-contract",
+  "version": "0.2.1",
+  "description": "Versioned OpenAPI contract and generated A DJAL clients",
+  "type": "module",
+  "files": [
+    "openapi.yaml",
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./zod": {
+      "types": "./dist/zod/index.d.ts",
+      "import": "./dist/zod/index.js"
+    },
+    "./openapi.yaml": "./openapi.yaml",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "codegen": "orval --config ./orval.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.90.21",
+    "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/node": "^22.0.0",
+    "orval": "^8.23.0",
+    "typescript": "^5.9.3"
+  }
+}
