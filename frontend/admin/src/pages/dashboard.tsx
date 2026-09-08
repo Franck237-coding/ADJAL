@@ -22,7 +22,10 @@ export default function DashboardPage() {
     return (
       <div className="p-6 bg-destructive/10 text-destructive rounded-lg border border-destructive/20">
         <h2 className="font-semibold text-lg mb-2">{t("Failed to load summary")}</h2>
-        <p>{t("There was an error communicating with the server. Please try again later.")}</p>
+        <p className="mb-4">{t("There was an error communicating with the server. Please try again later.")}</p>
+        <Button variant="outline" onClick={() => window.location.reload()}>
+          {t("Retry")}
+        </Button>
       </div>
     );
   }

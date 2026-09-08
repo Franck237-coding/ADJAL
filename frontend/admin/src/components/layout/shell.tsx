@@ -35,7 +35,16 @@ export default function Shell({ children }: ShellProps) {
     setLocation("/");
   }, [isUnauthorized, location, setLocation]);
 
-  if (isUnauthorized) return null;
+  if (isUnauthorized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="max-w-md w-full p-6 bg-destructive/10 text-destructive rounded-lg border border-destructive/20">
+          <h2 className="font-semibold text-lg mb-2">{t("Access Denied")}</h2>
+          <p>{t("You do not have administrative privileges or your session has expired.")}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || !account) {
     return (
