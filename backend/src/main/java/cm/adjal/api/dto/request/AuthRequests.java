@@ -10,7 +10,7 @@ public final class AuthRequests {
     private AuthRequests() {}
     public record Register(
         @NotBlank @Size(min = 2, max = 120) String name,
-        @NotBlank @Email String email,
+         @NotBlank String email,
         @NotBlank @Size(min = 10, max = 128) String password,
         @NotBlank @Pattern(regexp = "\\+237[0-9]{9}") String phone,
         @NotBlank @Size(min = 2, max = 80) String city,
@@ -18,14 +18,17 @@ public final class AuthRequests {
     ) {}
 
     public record Login(
-        @NotBlank @Size(min = 3, max = 160) String email,
-        @NotBlank @Size(max = 128) String password
+        String email,
+        String password
     ) {}
 
-    public record PasswordReset(@NotBlank @Email String email) {}
+    public record PasswordReset(@NotBlank String email) {}
 
     public record PasswordResetConfirmation(
-        @NotBlank @Size(min = 40, max = 128) String token,
-        @NotBlank @Size(min = 10, max = 128) String password
+        /** Code à 6 chiffres reçu par email (ou ancien code long). */
+        @NotBlank @Size(min = 6, max = 128) String token,
+        @NotBlank @Size(min = 10, max = 128) String password,
+        /** Email du compte, obligatoire avec un code à 6 chiffres. */
+        String email
     ) {}
 }

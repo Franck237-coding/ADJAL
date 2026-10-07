@@ -142,7 +142,7 @@ public class MarketplaceRepository {
     public List<Product> saleableProducts() {
         return jdbc.query("""
             SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                    p.description, p.image_url, p.latitude, p.longitude
             FROM products p JOIN accounts a ON a.id = p.owner_id
             WHERE p.status = 'published'
@@ -156,7 +156,7 @@ public class MarketplaceRepository {
     public List<Product> productsForFarmer(UUID ownerId) {
         return jdbc.query("""
             SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                    p.description, p.image_url, p.latitude, p.longitude
             FROM products p JOIN accounts a ON a.id = p.owner_id
             WHERE p.owner_id = ? ORDER BY p.created_at DESC
@@ -166,7 +166,7 @@ public class MarketplaceRepository {
     public Optional<Product> findProduct(UUID id) {
         return jdbc.query("""
             SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                    p.description, p.image_url, p.latitude, p.longitude
             FROM products p JOIN accounts a ON a.id = p.owner_id WHERE p.id = ?
             """, this::mapProduct, sqlId(id)).stream().findFirst();
@@ -176,7 +176,7 @@ public class MarketplaceRepository {
                                         BigDecimal minPrice, BigDecimal maxPrice) {
         StringBuilder sql = new StringBuilder("""
             SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                    p.description, p.image_url, p.latitude, p.longitude
             FROM products p JOIN accounts a ON a.id = p.owner_id
             WHERE p.status = 'published' AND p.stock > 0
@@ -281,7 +281,9 @@ public class MarketplaceRepository {
                    o.unit_price, o.status, o.city, o.created_at,
                    seller.name AS seller_name, seller.city AS seller_city, seller.phone AS seller_phone,
                    seller.latitude AS seller_latitude, seller.longitude AS seller_longitude,
-                   buyer.name AS buyer_name, buyer.city AS buyer_city, buyer.phone AS buyer_phone
+                   buyer.name AS buyer_name, buyer.city AS buyer_city, buyer.phone AS buyer_phone,
+                   p.image_url AS product_image_url, p.category AS product_category, p.unit AS product_unit,
+                   seller.avatar_url AS seller_avatar_url, buyer.avatar_url AS buyer_avatar_url
              FROM orders o JOIN products p ON p.id = o.product_id
              JOIN accounts seller ON seller.id = p.owner_id
              JOIN accounts buyer ON buyer.id = o.buyer_id
@@ -298,7 +300,9 @@ public class MarketplaceRepository {
                    o.unit_price, o.status, o.city, o.created_at,
                    seller.name AS seller_name, seller.city AS seller_city, seller.phone AS seller_phone,
                    seller.latitude AS seller_latitude, seller.longitude AS seller_longitude,
-                   buyer.name AS buyer_name, buyer.city AS buyer_city, buyer.phone AS buyer_phone
+                   buyer.name AS buyer_name, buyer.city AS buyer_city, buyer.phone AS buyer_phone,
+                   p.image_url AS product_image_url, p.category AS product_category, p.unit AS product_unit,
+                   seller.avatar_url AS seller_avatar_url, buyer.avatar_url AS buyer_avatar_url
              FROM orders o JOIN products p ON p.id = o.product_id
              JOIN accounts seller ON seller.id = p.owner_id
              JOIN accounts buyer ON buyer.id = o.buyer_id
@@ -312,7 +316,7 @@ public class MarketplaceRepository {
     public Order createOrder(UUID buyerId, UUID productId, int quantity, String city) {
         Product product = jdbc.query("""
             SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                    p.description, p.image_url, p.latitude, p.longitude
             FROM products p JOIN accounts a ON a.id = p.owner_id
             WHERE p.id = ? FOR UPDATE
@@ -346,7 +350,7 @@ public class MarketplaceRepository {
         for (var entry : wanted.entrySet()) {
             Product product = jdbc.query("""
                 SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                       p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                       p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                        p.description, p.image_url, p.latitude, p.longitude
                 FROM products p JOIN accounts a ON a.id = p.owner_id WHERE p.id = ? FOR UPDATE
                 """, this::mapProduct, sqlId(entry.getKey())).stream().findFirst()
@@ -366,7 +370,9 @@ public class MarketplaceRepository {
                    o.unit_price, o.status, o.city, o.created_at,
                    seller.name AS seller_name, seller.city AS seller_city, seller.phone AS seller_phone,
                    seller.latitude AS seller_latitude, seller.longitude AS seller_longitude,
-                   buyer.name AS buyer_name, buyer.city AS buyer_city, buyer.phone AS buyer_phone
+                   buyer.name AS buyer_name, buyer.city AS buyer_city, buyer.phone AS buyer_phone,
+                   p.image_url AS product_image_url, p.category AS product_category, p.unit AS product_unit,
+                   seller.avatar_url AS seller_avatar_url, buyer.avatar_url AS buyer_avatar_url
              FROM orders o JOIN products p ON p.id = o.product_id
              JOIN accounts seller ON seller.id = p.owner_id
              JOIN accounts buyer ON buyer.id = o.buyer_id WHERE o.id = ?
@@ -489,7 +495,7 @@ public class MarketplaceRepository {
     public List<Product> allProducts() {
         return jdbc.query("""
             SELECT p.id, p.name, p.category, p.city, p.price, p.unit, p.stock, p.status,
-                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name,
+                   p.harvest_date, p.shelf_life_days, p.owner_id, a.name AS owner_name, a.avatar_url AS owner_avatar_url,
                    p.description, p.image_url, p.latitude, p.longitude
             FROM products p JOIN accounts a ON a.id = p.owner_id ORDER BY p.created_at
             """, this::mapProduct);
@@ -605,7 +611,7 @@ public class MarketplaceRepository {
         List<Conversation> existing = jdbc.query("""
             SELECT c.id, c.participant_one_id, c.participant_two_id, c.created_at, c.updated_at,
              a2.name AS other_name,
-             CASE WHEN c.participant_one_id = ? THEN a2.avatar_url ELSE a1.avatar_url END AS other_avatar_url
+             a2.avatar_url AS other_avatar_url
             FROM conversations c JOIN accounts a2 ON a2.id = CASE
               WHEN c.participant_one_id = ? THEN c.participant_two_id ELSE c.participant_one_id END
             WHERE (c.participant_one_id = ? AND c.participant_two_id = ?)
@@ -614,7 +620,7 @@ public class MarketplaceRepository {
             """, (rs, row) -> new Conversation(
              UUID.fromString(rs.getString("id")), otherId, rs.getString("other_name"), rs.getString("other_avatar_url"),
             0L, rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant()
-          ), sqlId(accountId), sqlId(accountId), sqlId(accountId), sqlId(otherId), sqlId(otherId), sqlId(accountId));
+          ), sqlId(accountId), sqlId(accountId), sqlId(otherId), sqlId(otherId), sqlId(accountId));
         if (!existing.isEmpty()) return existing.get(0);
         UUID id = UUID.randomUUID();
         String firstParticipant = sqlId(accountId);
@@ -715,7 +721,7 @@ public class MarketplaceRepository {
             rs.getString("status"), harvest == null ? null : harvest.toLocalDate(), (Integer) rs.getObject("shelf_life_days"),
             UUID.fromString(rs.getString("owner_id")), rs.getString("owner_name"),
             rs.getString("description"), imageUrl,
-            rs.getBigDecimal("latitude"), rs.getBigDecimal("longitude"));
+            rs.getBigDecimal("latitude"), rs.getBigDecimal("longitude"), rs.getString("owner_avatar_url"));
     }
 
     private Optional<String> categoryImage(String slug) {
@@ -737,7 +743,16 @@ public class MarketplaceRepository {
             rs.getBigDecimal("unit_price"), rs.getString("status"), rs.getString("city"),
             rs.getTimestamp("created_at").toInstant(), rs.getString("seller_name"), rs.getString("seller_city"),
             rs.getString("seller_phone"), rs.getBigDecimal("seller_latitude"), rs.getBigDecimal("seller_longitude"),
-            rs.getString("buyer_name"), rs.getString("buyer_city"), rs.getString("buyer_phone"));
+            rs.getString("buyer_name"), rs.getString("buyer_city"), rs.getString("buyer_phone"),
+            orderProductImage(rs), rs.getString("product_category"), rs.getString("product_unit"),
+            rs.getString("seller_avatar_url"), rs.getString("buyer_avatar_url"));
+    }
+
+    /** Même image que la fiche produit : image du produit, sinon image de sa catégorie. */
+    private String orderProductImage(ResultSet rs) throws SQLException {
+        String imageUrl = rs.getString("product_image_url");
+        if (imageUrl != null && !imageUrl.isBlank()) return imageUrl;
+        return categoryImage(rs.getString("product_category")).orElse(null);
     }
 
     private static List<String> readArray(String serialized) {
@@ -755,7 +770,7 @@ public class MarketplaceRepository {
     public record Product(UUID id, String name, String category, String city, BigDecimal price, String unit,
                           BigDecimal stock, String status, LocalDate harvestDate, Integer shelfLifeDays,
                            UUID ownerId, String ownerName, String description, String imageUrl,
-                           BigDecimal latitude, BigDecimal longitude) {}
+                           BigDecimal latitude, BigDecimal longitude, String ownerAvatarUrl) {}
     public record Conversation(UUID id, UUID otherId, String otherName, String otherAvatarUrl, long unreadCount,
                                 Instant createdAt, Instant updatedAt) {}
     public record Message(UUID id, UUID conversationId, UUID senderId, String senderName, String body,
@@ -764,7 +779,9 @@ public class MarketplaceRepository {
                         BigDecimal unitPrice, String status, String city, Instant createdAt,
                         String sellerName, String sellerCity, String sellerPhone,
                         BigDecimal sellerLatitude, BigDecimal sellerLongitude,
-                        String buyerName, String buyerCity, String buyerPhone) {}
+                        String buyerName, String buyerCity, String buyerPhone,
+                        String productImageUrl, String productCategory, String productUnit,
+                        String sellerAvatarUrl, String buyerAvatarUrl) {}
     public record CheckoutLine(UUID productId, int quantity) {}
     public record Report(UUID id, String reason, String details, String status, String resolution, Instant createdAt,
                          String reporterName, String reporterEmail, UUID farmerId, String farmerName, String farmerEmail,

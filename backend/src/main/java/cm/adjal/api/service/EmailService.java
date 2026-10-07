@@ -56,7 +56,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(
                 message, false, StandardCharsets.UTF_8.name()
             );
-            helper.setFrom(from);
+            helper.setFrom(from, "A DJAL");
             helper.setTo(to);
             helper.setSubject("Réinitialisez votre mot de passe A DJAL");
             helper.setText(
@@ -71,13 +71,13 @@ public class EmailService {
                 """
                 <p>Une demande de réinitialisation du mot de passe A DJAL a été reçue.</p>
                 <p>Dans l’application, saisissez ce code de récupération :</p>
-                <p style="font-family:monospace;font-size:16px;word-break:break-all"><strong>%s</strong></p>
+                <p style="font-family:monospace;font-size:28px;letter-spacing:6px;color:#2F7D32"><strong>%s</strong></p>
                 <p>Ce code expire dans %d minutes et ne peut être utilisé qu’une seule fois.</p>
                 <p>Si vous n’êtes pas à l’origine de cette demande, vous pouvez ignorer cet e-mail.</p>
                 """.formatted(escapeHtml(token), expiresInMinutes)
             );
             mailSender.send(message);
-        } catch (MessagingException | MailException exception) {
+        } catch (MessagingException | MailException | java.io.UnsupportedEncodingException exception) {
             throw new IllegalStateException("Password reset email delivery failed", exception);
         }
     }

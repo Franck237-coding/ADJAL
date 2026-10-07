@@ -17,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +30,13 @@ public class AuthController {
     private final TokenCodec tokens;
     private final EmailService emailService;
     private final Map<String, Instant> resetCooldowns = new ConcurrentHashMap<>();
+    /** Échecs de saisie du code par compte : bloque après 5 essais pendant 15 minutes. */
+    private final Map<UUID, ResetAttempts> resetAttempts = new ConcurrentHashMap<>();
+    private final SecureRandom random = new SecureRandom();
+    private static final int MAX_RESET_ATTEMPTS = 5;
+    private static final long RESET_TTL_SECONDS = 900;
+
+    private record ResetAttempts(int failures, Instant since) {}
 
     public AuthController(AuthService authService, PasswordCodec passwords,
                           TokenCodec tokens, EmailService emailService) {
@@ -55,7 +63,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    ResponseEntity<AuthResponses.Session> login(@Valid @RequestBody AuthRequests.Login body) {
+    ResponseEntity<AuthResponses.Session> login(@RequestBody AuthRequests.Login body) {
         String email = body.email();
         String password = body.password();
         MarketplaceRepository.Credentials credentials = authService.findCredentials(email);
@@ -87,13 +95,21 @@ public class AuthController {
         if (email.contains("@") && resetCooldowns.getOrDefault(key, Instant.MIN).isBefore(now.minusSeconds(60))) {
             resetCooldowns.put(key, now);
             authService.findByEmail(email).ifPresent(account -> {
-                if (!emailService.isConfigured()) return;
-                String rawToken = tokens.generate();
-                authService.createResetToken(account.id(), tokens.sha256(rawToken), now.plusSeconds(900));
+                if (!emailService.isConfigured()) {
+                    System.err.println("[RESET] Email non envoyé : SMTP non configuré (voir backend/smtp.properties).");
+                    return;
+                }
+                // Code à 6 chiffres, facile à saisir sur téléphone, valable 15 minutes et à usage unique.
+                String code = String.format("%06d", random.nextInt(1_000_000));
+                String codeHash = resetCodeHash(account.id(), code);
+                authService.createResetToken(account.id(), codeHash, now.plusSeconds(RESET_TTL_SECONDS));
+                resetAttempts.remove(account.id());
                 try {
-                    emailService.sendPasswordReset(email, rawToken, 15);
+                    emailService.sendPasswordReset(email, code, 15);
                 } catch (RuntimeException exception) {
-                    authService.deleteResetToken(tokens.sha256(rawToken));
+                    System.err.println("[RESET] Échec d'envoi de l'email à " + email + " : " + exception.getMessage());
+                    if (exception.getCause() != null) System.err.println("[RESET] Cause : " + exception.getCause().getMessage());
+                    authService.deleteResetToken(codeHash);
                 }
             });
         }
@@ -102,10 +118,35 @@ public class AuthController {
 
     @PostMapping("/password-reset/confirm")
     ResponseEntity<Void> confirmReset(@Valid @RequestBody AuthRequests.PasswordResetConfirmation body) {
-        String token = body.token();
+        String token = body.token().trim();
         String password = body.password();
-        Optional<MarketplaceRepository.ResetToken> reset = authService.findValidResetToken(tokens.sha256(token));
-        if (reset.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid or expired reset credential");
+        Optional<MarketplaceRepository.ResetToken> reset;
+        if (token.matches("\\d{6}")) {
+            // Code à 6 chiffres : il est lié au compte, l'email est donc obligatoire.
+            String email = body.email() == null ? "" : body.email().trim().toLowerCase(Locale.ROOT);
+            AuthenticatedUser account = authService.findByEmail(email)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Code invalide ou expiré."));
+            ResetAttempts attempts = resetAttempts.get(account.id());
+            if (attempts != null && attempts.since().isBefore(Instant.now().minusSeconds(RESET_TTL_SECONDS))) {
+                resetAttempts.remove(account.id());
+                attempts = null;
+            }
+            if (attempts != null && attempts.failures() >= MAX_RESET_ATTEMPTS) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "Trop d'essais. Demandez un nouveau code dans quelques minutes.");
+            }
+            reset = authService.findValidResetToken(resetCodeHash(account.id(), token));
+            if (reset.isEmpty()) {
+                resetAttempts.merge(account.id(), new ResetAttempts(1, Instant.now()),
+                    (previous, ignored) -> new ResetAttempts(previous.failures() + 1, previous.since()));
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Code invalide ou expiré.");
+            }
+            resetAttempts.remove(account.id());
+        } else {
+            // Ancien format (long code) toujours accepté.
+            reset = authService.findValidResetToken(tokens.sha256(token));
+        }
+        if (reset.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Code invalide ou expiré.");
         PasswordCodec.HashResult hash = passwords.hash(password);
         if (!authService.consumeResetToken(reset.get().id(), reset.get().accountId(), hash.hash(), hash.salt())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid or expired reset credential");
@@ -118,6 +159,10 @@ public class AuthController {
         String rawToken = tokens.generate();
         authService.createSession(tokens.sha256(rawToken), account.id(), Instant.now().plusSeconds(30L * 86400));
         return AuthResponses.Session.from(rawToken, account);
+    }
+
+    private String resetCodeHash(UUID accountId, String code) {
+        return tokens.sha256("reset:" + accountId + ":" + code);
     }
 
     public static AccountResponse accountJson(AuthenticatedUser account) {

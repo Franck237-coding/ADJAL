@@ -15,11 +15,11 @@ public final class CatalogResponses {
     public record Product(UUID id, String name, String category, String city, java.math.BigDecimal price,
                           String unit, java.math.BigDecimal stock, String status, java.time.LocalDate harvestDate,
                            Integer shelfLifeDays, String ownerName, String description, String imageUrl,
-                           java.math.BigDecimal latitude, java.math.BigDecimal longitude) {
+                           java.math.BigDecimal latitude, java.math.BigDecimal longitude, String ownerAvatarUrl) {
         public static Product from(MarketplaceRepository.Product p) {
             return new Product(p.id(), p.name(), p.category(), p.city(), p.price(), p.unit(), p.stock(),
                 p.status(), p.harvestDate(), p.shelfLifeDays(), p.ownerName(), p.description(), p.imageUrl(),
-                p.latitude(), p.longitude());
+                p.latitude(), p.longitude(), p.ownerAvatarUrl());
         }
     }
 }

@@ -77,6 +77,11 @@ public class RecommendationService {
         productJson.put("harvestDate", product.harvestDate());
         productJson.put("shelfLifeDays", product.shelfLifeDays());
         productJson.put("ownerName", product.ownerName());
+        productJson.put("ownerAvatarUrl", product.ownerAvatarUrl());
+        productJson.put("description", product.description());
+        productJson.put("imageUrl", product.imageUrl());
+        productJson.put("latitude", product.latitude());
+        productJson.put("longitude", product.longitude());
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("product", productJson);
         result.put("score", Math.round(score * 100) / 100.0);

@@ -54,7 +54,10 @@ export type NotificationItem = {
   id: string;
   title: string;
   body: string;
-  type: 'order' | 'message' | 'product' | 'system';
+  /** Type envoyé par le backend (new_order, order_status, message, product_status…). */
+  type: string;
+  resourceType?: string | null;
+  resourceId?: string | null;
   createdAt: string;
   readAt?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -69,7 +72,6 @@ export type PaymentMethod = {
 export type DailyOffer = {
   id: string;
   productId: string;
-  discountPercent: number;
   label: string;
   availability: string;
   expiresAt: string;
@@ -86,6 +88,8 @@ export type Product = {
   image: string;
   category: string;
   farmer: string;
+  /** Photo de profil de l'agriculteur. */
+  farmerAvatar?: string;
   location: string;
   stock: number;
   rating: number;
@@ -121,6 +125,8 @@ export type Order = {
   buyerName?: string;
   buyerCity?: string;
   buyerPhone?: string;
+  sellerAvatar?: string;
+  buyerAvatar?: string;
 };
 
 export type Category = {
@@ -292,9 +298,9 @@ export const seedProducts: Product[] = []; /*
 ];
 
 export const dailyOffers: DailyOffer[] = [
-  { id: 'offer-tomatoes', productId: 'p1', discountPercent: 12, label: 'Récolte du matin', availability: '24 caisses disponibles', expiresAt: 'Aujourd\u2019hui, 18:00' },
-  { id: 'offer-plantains', productId: 'p4', discountPercent: 10, label: 'Direct de Loum', availability: '35 régimes disponibles', expiresAt: 'Aujourd\u2019hui, 20:00' },
-  { id: 'offer-cassava', productId: 'p2', discountPercent: 8, label: 'Sélection locale', availability: '10 filets disponibles', expiresAt: 'Demain, 10:00' },
+  { id: 'offer-tomatoes', productId: 'p1', label: 'Récolte du matin', availability: '24 caisses disponibles', expiresAt: 'Aujourd\u2019hui, 18:00' },
+  { id: 'offer-plantains', productId: 'p4', label: 'Direct de Loum', availability: '35 régimes disponibles', expiresAt: 'Aujourd\u2019hui, 20:00' },
+  { id: 'offer-cassava', productId: 'p2', label: 'Sélection locale', availability: '10 filets disponibles', expiresAt: 'Demain, 10:00' },
 ];
 
 const seedOrders: Order[] = [
@@ -394,7 +400,7 @@ function safeRole(serverRole: string): 'buyer' | 'farmer' {
 /** UI-only fields are kept locally while server-backed product media is preferred. */
 type ProductUiOverlay = { description?: string; image?: string; rating?: number; isPopular?: boolean };
 
-const fallbackProductImage = '';
+const fallbackProductImage = 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=600&q=85';
 const categoryFallbackImages: Record<string, string> = {
   fruits: 'https://images.unsplash.com/photo-1577234286642-fc512a5f8f1f?w=900&q=85',
   legumes: 'https://images.unsplash.com/photo-1540420773420-3366772f3310?w=900&q=85',
@@ -416,6 +422,7 @@ function apiProductToProduct(
     image: apiAssetUrl(api.imageUrl) ?? overlay?.image ?? fallbackProductImage,
     category: api.category,
     farmer: api.ownerName ?? '',
+    farmerAvatar: apiAssetUrl(api.ownerAvatarUrl),
     location: api.city,
     stock: api.stock,
     rating: overlay?.rating ?? 4.7,
@@ -465,17 +472,28 @@ function apiOrderToOrder(
   customerName: string,
   known?: Product,
 ): Order {
+  // L'image envoyée par le serveur avec la commande est la même que celle de la fiche produit.
+  const serverImage = apiAssetUrl(api.productImageUrl);
   const lineProduct: Product = known
-    ? { ...known, price: api.unitPrice, name: api.productName, stock: Math.max(known.stock, api.quantity) }
+    ? {
+        ...known,
+        price: api.unitPrice,
+        name: api.productName,
+        image: serverImage ?? known.image,
+        unit: api.productUnit ?? known.unit,
+        category: api.productCategory ?? known.category,
+        stock: Math.max(known.stock, api.quantity),
+      }
     : {
         id: api.productId,
         name: api.productName,
         description: 'Produit agricole local soigneusement sélectionné.',
         price: api.unitPrice,
-        unit: 'unité',
-        image: fallbackProductImage,
-        category: 'legumes',
+        unit: api.productUnit ?? 'unité',
+        image: serverImage ?? fallbackProductImage,
+        category: api.productCategory ?? 'legumes',
          farmer: api.sellerName ?? '',
+         farmerAvatar: apiAssetUrl(api.sellerAvatarUrl),
          location: api.sellerCity ?? api.city,
         stock: api.quantity,
         rating: 4.7,
@@ -498,6 +516,8 @@ function apiOrderToOrder(
     buyerName: api.buyerName ?? undefined,
     buyerCity: api.buyerCity ?? undefined,
     buyerPhone: api.buyerPhone ?? undefined,
+    sellerAvatar: apiAssetUrl(api.sellerAvatarUrl),
+    buyerAvatar: apiAssetUrl(api.buyerAvatarUrl),
   };
 }
 
@@ -529,6 +549,7 @@ const sessionTokenStore = {
 
 type AppContextValue = {
   accessToken: string | null;
+  userId: string | null;
   hydrated: boolean;
   hasSeenOnboarding: boolean;
   role: Role | null;
@@ -575,6 +596,11 @@ type AppContextValue = {
   updateOrderStatus: (orderId: string, status: Order['status']) => Promise<void>;
   notificationsEnabled: boolean;
   updateNotificationPreferences: (enabled: boolean) => Promise<void>;
+  refreshNotifications: () => Promise<void>;
+  /** Recharge les commandes depuis le serveur (ex. à l'ouverture d'une notification). */
+  refreshOrders: () => Promise<void>;
+  /** Recharge les annonces de l'agriculteur connecté. */
+  refreshFarmerListings: () => Promise<void>;
   notifications: NotificationItem[];
   cartCount: number;
   cartTotal: number;
@@ -598,6 +624,18 @@ type AppContextValue = {
   saveInterests: (interests: string[]) => Promise<void>;
   recordInteraction: (productId: string, type: 'view' | 'search' | 'purchase') => Promise<void>;
 };
+
+/**
+ * Code de commande court et lisible pour l'affichage (ex. « CMD-7F3A2C »).
+ * Tiré de l'identifiant serveur : identique pour l'acheteur, l'agriculteur et l'admin.
+ * L'identifiant complet reste utilisé en interne pour les appels API.
+ */
+export function formatOrderCode(id: string | null | undefined): string {
+  if (!id) return 'CMD-?';
+  const compact = id.replace(/[^a-zA-Z0-9]/g, '');
+  if (compact.length <= 6) return id;
+  return `CMD-${compact.slice(0, 6).toUpperCase()}`;
+}
 
 const AppContext = createContext<AppContextValue | null>(null);
 
@@ -635,6 +673,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   /** Opaque access token — kept in state but never logged. */
   const [accessToken, setAccessTokenState] = useState<string | null>(null);
+  const [userId, setUserIdState] = useState<string | null>(null);
   /**
    * UI-only overlays (description/image/rating/popularity) for server products,
    * keyed by product id. The API does not persist these fields.
@@ -739,39 +778,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const storedProfile = stored[storageKeys.profile];
         const storedPaymentMethods = stored[storageKeys.paymentMethods];
         if (storedProfile) {
-          const restoredProfile = JSON.parse(storedProfile) as Partial<UserProfile>;
-          setProfile({ ...defaultProfile, ...restoredProfile, interests: Array.isArray(restoredProfile.interests) ? restoredProfile.interests : [] });
-          setNotificationsEnabled(restoredProfile.notificationsEnabled ?? true);
+          try {
+            const restoredProfile = JSON.parse(storedProfile) as Partial<UserProfile>;
+            setProfile({ ...defaultProfile, ...restoredProfile, interests: Array.isArray(restoredProfile.interests) ? restoredProfile.interests : [] });
+            setNotificationsEnabled(restoredProfile.notificationsEnabled ?? true);
+          } catch {
+            // Corrupted profile data — ignore and use defaults.
+          }
         }
         if (storedPaymentMethods) {
-          const restoredMethods: PaymentMethod[] = JSON.parse(storedPaymentMethods).map((method: PaymentMethod) => ({ ...method, kind: method.kind ?? 'orange-money' }));
-          setPaymentMethods(restoredMethods);
-          const restoredSelectedId = stored[storageKeys.selectedPaymentMethodId];
-          setSelectedPaymentMethodId(restoredMethods.some((method) => method.id === restoredSelectedId) ? restoredSelectedId : restoredMethods[0]?.id ?? null);
+          try {
+            const restoredMethods: PaymentMethod[] = JSON.parse(storedPaymentMethods).map((method: PaymentMethod) => ({ ...method, kind: method.kind ?? 'orange-money' }));
+            setPaymentMethods(restoredMethods);
+            const restoredSelectedId = stored[storageKeys.selectedPaymentMethodId];
+            setSelectedPaymentMethodId(restoredMethods.some((method) => method.id === restoredSelectedId) ? restoredSelectedId : restoredMethods[0]?.id ?? null);
+          } catch {
+            // Corrupted payment methods — ignore.
+          }
         } else if (stored[storageKeys.selectedPaymentMethodId] === 'pm-mobile-money') {
           setSelectedPaymentMethodId('pm-orange-money');
         }
         const storedCart = stored[storageKeys.cart];
-        if (storedCart) setCart(JSON.parse(storedCart).map((line: CartLine) => ({ ...line, id: line.id ?? `${line.product.id}:${line.product.offerId ?? 'standard'}:${line.product.price}` })));
+        if (storedCart) {
+          try {
+            setCart(JSON.parse(storedCart).map((line: CartLine) => ({ ...line, id: line.id ?? `${line.product.id}:${line.product.offerId ?? 'standard'}:${line.product.price}` })));
+          } catch {
+            // Corrupted cart — ignore.
+          }
+        }
 
         // Hydrate auth: restore token and validate with GET /api/auth/me
         const storedToken = await sessionTokenStore.getItem(storageKeys.accessToken);
         if (storedToken) {
           try {
             const account = await apiGetMe(storedToken);
-            // Only trust buyer/farmer from server — never admin in mobile
             if (account.role === 'admin') {
-              // admin accounts are not allowed in mobile
               await persistToken(null);
             } else {
-              setAccessTokenState(storedToken);
-              setRoleState(safeRole(account.role));
-              setProfile((current) => accountToProfile(account, current));
-              // Server is the source of truth for signed-in users.
-              await loadServerData(storedToken, account);
+             setAccessTokenState(storedToken);
+             setUserIdState(account.id);
+             setRoleState(safeRole(account.role));
+             setProfile((current) => accountToProfile(account, current));
+             await loadServerData(storedToken, account);
             }
           } catch {
-            // Token expired or invalid — clear it silently
             await persistToken(null);
           }
         } else {
@@ -785,11 +835,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           } catch {
             // Offline guests see an honest empty state instead of fabricated products.
           }
-          // No token: restore role from storage for guest mode
           if (stored[storageKeys.role]) {
             const storedRole = stored[storageKeys.role] as Role;
             if (storedRole === 'guest') setRoleState('guest');
-            // authenticated roles without token are not restored (session lost)
           }
         }
       } finally {
@@ -809,7 +857,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       [storageKeys.paymentMethods, JSON.stringify(paymentMethods)],
       [storageKeys.selectedPaymentMethodId, selectedPaymentMethodId ?? ''],
       [storageKeys.cart, JSON.stringify(cart)],
-    ]);
+    ]).catch(() => {
+      // Échec de sauvegarde locale : on ignore pour ne pas bloquer l'application.
+    });
   }, [cart, hasSeenOnboarding, hydrated, language, orders, paymentMethods, serverCatalog, profile, role, selectedPaymentMethodId, themeMode]);
 
   const setHasSeenOnboarding = (value: boolean) => setHasSeenOnboardingState(value);
@@ -823,6 +873,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     setNotificationsEnabled(enabled);
     updateProfile({ notificationsEnabled: enabled });
+  };
+  const refreshNotifications = async () => {
+    if (!accessToken) return;
+    try {
+      const items = await apiGetNotifications(accessToken);
+      setNotifications(items);
+    } catch {
+      // Silently ignore refresh failures.
+    }
+  };
+  const refreshOrders = async () => {
+    if (!accessToken) return;
+    try {
+      const result = await apiGetOrders(accessToken);
+      const known = [...serverCatalog, ...farmerListings];
+      setOrders(result.map((api) =>
+        apiOrderToOrder(
+          api,
+          role === 'farmer' ? (api.buyerName ?? 'Client A DJAL') : profile.name,
+          known.find((product) => product.id === api.productId),
+        ),
+      ));
+    } catch {
+      // Garde les commandes déjà affichées si le serveur est momentanément injoignable.
+    }
+  };
+  const refreshFarmerListings = async () => {
+    if (!accessToken || role !== 'farmer') return;
+    try {
+      const mine = await apiGetMyProducts(accessToken);
+      setFarmerListings(mine.map((api) => apiProductToProduct(api, productOverlaysRef.current[api.id])));
+    } catch {
+      // Garde les annonces déjà affichées.
+    }
   };
   const addPaymentMethod = (method: Omit<PaymentMethod, 'id'>) => {
     const next = { ...method, id: `pm-${Date.now()}` };
@@ -911,7 +995,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const city = product.location.split(',')[0]?.trim() || product.location.trim();
     const isExistingServerListing = farmerListings.some((item) => item.id === product.id);
     const resolveUpload = async (image: string | undefined) => {
-      if (!image || !(image.startsWith('file://') || image.startsWith('blob:'))) return undefined;
+      if (!image || !(image.startsWith('file://') || image.startsWith('content://') || image.startsWith('ph://') || image.startsWith('blob:'))) return undefined;
       const uploaded = await apiUploadMedia(accessToken, { uri: image });
       return uploaded.url;
     };
@@ -945,7 +1029,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Preserve UI-only fields locally, keyed by the server id from the response.
     productOverlaysRef.current[saved.id] = {
       description: product.description,
-      image: product.image,
+      image: uploadedImage ?? product.image,
       rating: product.rating,
       isPopular: product.isPopular,
     };
@@ -994,16 +1078,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signIn = async (email: string, password: string): Promise<'buyer' | 'farmer'> => {
     const session = await apiLogin({ email, password });
     const serverRole = safeRole(session.account.role);
-    await persistToken(session.accessToken);
-    setAccessTokenState(session.accessToken);
-    setProfile((current) => accountToProfile(session.account, current));
-    setRoleState(serverRole);
-    // Fresh session — start from server truth, drop any prior farmer listings.
-    setFarmerListings([]);
-    setRecommendations([]);
-    await loadServerData(session.accessToken, session.account);
-    return serverRole;
-  };
+     await persistToken(session.accessToken);
+     setAccessTokenState(session.accessToken);
+     setUserIdState(session.account.id);
+     setProfile((current) => accountToProfile(session.account, current));
+     setRoleState(serverRole);
+     // Fresh session — start from server truth, drop any prior farmer listings.
+     setFarmerListings([]);
+     setRecommendations([]);
+     await loadServerData(session.accessToken, session.account);
+     return serverRole;
+   };
 
   const registerAccount = async (params: {
     name: string;
@@ -1015,10 +1100,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }): Promise<'buyer' | 'farmer'> => {
     const session = await apiRegister(params);
     const serverRole = safeRole(session.account.role);
-    await persistToken(session.accessToken);
-    setAccessTokenState(session.accessToken);
-    setProfile((current) => accountToProfile(session.account, current));
-    setRoleState(serverRole);
+     await persistToken(session.accessToken);
+     setAccessTokenState(session.accessToken);
+     setUserIdState(session.account.id);
+     setProfile((current) => accountToProfile(session.account, current));
+     setRoleState(serverRole);
     // Fresh account — start from server truth (empty catalog/orders).
     setFarmerListings([]);
     setRecommendations([]);
@@ -1036,6 +1122,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     await persistToken(null);
     setAccessTokenState(null);
+    setUserIdState(null);
     setRoleState(null);
     // Drop authenticated server state; guests reload the public server catalog.
     setFarmerListings([]);
@@ -1084,10 +1171,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .map((product, index) => ({
         id: `server-offer-${product.id}`,
         productId: product.id,
-        discountPercent: [10, 15, 8][index] ?? 5,
         label: index === 0 ? 'OFFRE DU JOUR' : 'BON PLAN LOCAL',
         availability: `Stock limité · ${product.location}`,
-        expiresAt: 'Aujourd’hui',
+        expiresAt: 'Aujourd\u2019hui',
       }));
   }, [accessToken, serverCatalog]);
 
@@ -1095,6 +1181,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => ({
       hydrated,
       accessToken,
+      userId,
       hasSeenOnboarding,
       role,
       themeMode,
@@ -1126,6 +1213,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       updateOrderStatus,
       notificationsEnabled,
       updateNotificationPreferences,
+      refreshNotifications,
+      refreshOrders,
+      refreshFarmerListings,
       notifications,
       cartCount: cart.reduce((sum, line) => sum + line.quantity, 0),
       cartTotal: cart.reduce((sum, line) => sum + line.product.price * line.quantity, 0),
@@ -1135,7 +1225,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       saveInterests,
       recordInteraction,
     }),
-    [accessToken, cart, categoryOptions, farmerListings, hasSeenOnboarding, hydrated, language, orders, paymentMethods, products, profile, recommendations, role, selectedPaymentMethodId, themeMode, resolvedDailyOffers],
+    [accessToken, userId, cart, categoryOptions, farmerListings, hasSeenOnboarding, hydrated, language, notifications, notificationsEnabled, orders, paymentMethods, products, profile, recommendations, role, selectedPaymentMethodId, serverCatalog, themeMode, resolvedDailyOffers],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

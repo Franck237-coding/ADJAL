@@ -1,0 +1,13 @@
+# Copiez ce fichier en "smtp.properties" (meme dossier) puis remplissez vos identifiants.
+# Ce fichier contient un secret : ne le partagez pas et ne le versionnez pas.
+#
+# Exemple avec Gmail :
+#  1. Activez la validation en deux etapes sur le compte Google.
+#  2. Creez un "mot de passe d'application" : https://myaccount.google.com/apppasswords
+#  3. Collez ce mot de passe de 16 lettres (sans espaces) dans SMTP_PASS.
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=votre.adresse@gmail.com
+SMTP_PASS=motdepasseapplication
+# Adresse d'expedition (avec Gmail, elle doit etre identique a SMTP_USER)
+MAIL_FROM=votre.adresse@gmail.com
