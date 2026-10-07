@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from "react";
 import { 
   useGetAdminUsers, 
   useUpdateAdminUserStatus, 
+  useDeleteAdminUser,
   getGetAdminUsersQueryKey,
   type Account,
   type AccountStatus
@@ -13,7 +14,17 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Search, ShieldBan, ShieldCheck, Mail, MapPin } from "lucide-react";
+import { Loader2, Search, ShieldBan, ShieldCheck, Mail, MapPin, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAdminLanguage } from "@/lib/i18n";
@@ -22,6 +33,9 @@ export default function UsersPage() {
   const { t } = useAdminLanguage();
   const { data: users, isLoading, error } = useGetAdminUsers();
   const updateStatusMutation = useUpdateAdminUserStatus();
+  const deleteUserMutation = useDeleteAdminUser();
+  // Compte en attente de confirmation de suppression définitive.
+  const [userToDelete, setUserToDelete] = useState<Account | null>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -70,6 +84,35 @@ export default function UsersPage() {
             variant: "destructive",
           });
         }
+      }
+    );
+  };
+
+  const confirmDelete = () => {
+    const target = userToDelete;
+    if (!target) return;
+    deleteUserMutation.mutate(
+      { id: target.id },
+      {
+        onSuccess: () => {
+          queryClient.setQueryData<Account[]>(getGetAdminUsersQueryKey(), (old) =>
+            old ? old.filter((u) => u.id !== target.id) : old
+          );
+          void queryClient.invalidateQueries({ queryKey: getGetAdminUsersQueryKey() });
+          toast({
+            title: "Compte supprimé",
+            description: `Le compte de ${target.name} a été supprimé définitivement.`,
+          });
+          setUserToDelete(null);
+        },
+        onError: (mutationError) => {
+          toast({
+            title: "Suppression impossible",
+            description: mutationError instanceof Error ? mutationError.message : "Réessayez plus tard.",
+            variant: "destructive",
+          });
+          setUserToDelete(null);
+        },
       }
     );
   };
@@ -206,6 +249,7 @@ export default function UsersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         {user.role !== 'admin' && (
+                          <div className="flex items-center justify-end gap-2">
                           <Button 
                             variant={user.status === 'active' ? "outline" : "default"}
                             size="sm"
@@ -219,6 +263,17 @@ export default function UsersPage() {
                               <><ShieldCheck className="h-4 w-4 mr-1.5" /> Activate</>
                             )}
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Supprimer définitivement"
+                            title="Supprimer définitivement"
+                            onClick={() => setUserToDelete(user)}
+                            disabled={deleteUserMutation.isPending}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                          </div>
                         )}
                       </TableCell>
                     </TableRow>
@@ -229,6 +284,30 @@ export default function UsersPage() {
           </div>
         </CardContent>
       </Card>
+
+      <AlertDialog open={Boolean(userToDelete)} onOpenChange={(open) => { if (!open && !deleteUserMutation.isPending) setUserToDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer définitivement ce compte ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Le compte de <strong>{userToDelete?.name}</strong> ({userToDelete?.email}) sera supprimé avec ses produits,
+              commandes, conversations et notifications. Cette action est irréversible.
+              Pour bloquer temporairement l'accès, utilisez plutôt « Suspend ».
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteUserMutation.isPending}>Annuler</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteUserMutation.isPending}
+              onClick={(event) => { event.preventDefault(); confirmDelete(); }}
+            >
+              {deleteUserMutation.isPending ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1.5" />}
+              Supprimer définitivement
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -75,7 +75,8 @@ public class OrderController {
         UUID recipient = "buyer".equals(user.role())
             ? orderService.ownerIdForProduct(response.productId()) : response.buyerId();
         notificationService.create(recipient, "order_status", "Mise à jour de commande",
-            "Le statut de votre commande est maintenant : " + response.status(), "order", response.id());
+            "La commande « " + response.productName() + " » est maintenant : " + statusLabel(response.status()),
+            "order", response.id());
         return response;
     }
 
@@ -93,6 +94,18 @@ public class OrderController {
                 "Une nouvelle demande concerne votre produit " + order.productName(),
                 "order", order.id());
         }
+    }
+
+    /** Libellé français d'un statut de commande, pour les notifications. */
+    static String statusLabel(String status) {
+        if (status == null) return "mise à jour";
+        return switch (status) {
+            case "pending" -> "en attente";
+            case "confirmed" -> "confirmée";
+            case "delivered" -> "livrée";
+            case "cancelled" -> "annulée";
+            default -> status;
+        };
     }
 
     private OrderResponse orderJson(MarketplaceRepository.Order order) {

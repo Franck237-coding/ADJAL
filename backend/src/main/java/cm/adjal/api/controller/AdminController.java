@@ -10,6 +10,7 @@ import cm.adjal.api.dto.response.OrderResponse;
 import cm.adjal.api.repository.MarketplaceRepository;
 import cm.adjal.api.security.AuthenticatedUser;
 import cm.adjal.api.service.AdminService;
+import cm.adjal.api.service.NotificationService;
 import cm.adjal.api.service.PaymentService;
 import cm.adjal.api.service.ReviewService;
 import cm.adjal.api.dto.response.ReviewResponses;
@@ -28,11 +29,14 @@ public class AdminController {
     private final AdminService adminService;
     private final ReviewService reviewService;
     private final PaymentService paymentService;
+    private final NotificationService notificationService;
 
-    public AdminController(AdminService adminService, ReviewService reviewService, PaymentService paymentService) {
+    public AdminController(AdminService adminService, ReviewService reviewService, PaymentService paymentService,
+                           NotificationService notificationService) {
         this.adminService = adminService;
         this.reviewService = reviewService;
         this.paymentService = paymentService;
+        this.notificationService = notificationService;
     }
 
     @GetMapping("/summary")
@@ -93,7 +97,13 @@ public class AdminController {
     OrderResponse updateOrderStatus(@AuthenticationPrincipal AuthenticatedUser user, @PathVariable UUID id,
                                     @Valid @RequestBody AdminRequests.OrderStatus body) {
         requireAdmin(user);
-        return OrderResponse.from(adminService.updateOrderStatus(user.id(), id, body.status()));
+        OrderResponse order = OrderResponse.from(adminService.updateOrderStatus(user.id(), id, body.status()));
+        String text = "La commande « " + order.productName() + " » est maintenant : " + OrderController.statusLabel(order.status());
+        notificationService.create(order.buyerId(), "order_status", "Mise à jour de commande", text, "order", order.id());
+        if (order.sellerId() != null) {
+            notificationService.create(order.sellerId(), "order_status", "Mise à jour de commande", text, "order", order.id());
+        }
+        return order;
     }
 
     @GetMapping("/reports")
@@ -115,7 +125,17 @@ public class AdminController {
         requireAdmin(user);
         String status = body.status();
         if (!Set.of("published", "removed").contains(status)) throw new IllegalArgumentException("Invalid product moderation status");
-        return productJson(adminService.moderateProduct(id, status));
+        MarketplaceRepository.Product product = adminService.moderateProduct(id, status);
+        if (product.ownerId() != null) {
+            boolean published = "published".equals(status);
+            notificationService.create(product.ownerId(), "product_status",
+                published ? "Produit publié" : "Produit retiré",
+                published
+                    ? "Votre produit « " + product.name() + " » est maintenant visible par les acheteurs."
+                    : "Votre produit « " + product.name() + " » a été retiré du marché par l'administrateur.",
+                "product", product.id());
+        }
+        return productJson(product);
     }
 
     @GetMapping("/categories")

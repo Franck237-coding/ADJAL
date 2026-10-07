@@ -55,10 +55,10 @@ test('agriculteur : confirmer et livrer passent par une transition serveur', () 
 });
 
 test('acheteur et agriculteur : le contact depuis une commande ouvre la messagerie', () => {
-  expectSource(appSource, /onMessage=\{\(\) => setScreen\('messages'\)\}/, 'navigation vers la messagerie depuis le détail');
+  expectSource(appSource, /onMessage=\{\(\) => \{ setDirectConversation\(\{ contact: orderContact, contactId: orderContactId \}\); setScreen\('messages'\); \}\}/, 'navigation vers la messagerie depuis le détail');
   expectSource(appSource, /onMessage && <Pressable[\s\S]*?onMessage\(\)/, 'action de contact depuis une carte de commande');
-  expectSource(appSource, /<(?:LiveMessagesScreen|MessagesScreen) initialContact=\{orderContact\} onBack=\{\(\) => setScreen\('home'\)\} onNav=\{setBuyerScreen\} \/>/, 'écran de messagerie acheteur');
-  expectSource(appSource, /<(?:LiveMessagesScreen|MessagesScreen) initialContact=\{orderContact\} onBack=\{\(\) => setScreen\('dashboard'\)\} onNav=\{setBuyerScreen\} \/>/, 'écran de messagerie agriculteur');
+  expectSource(appSource, /<LiveMessagesScreen initialContact=\{directConversation\?\.contact\} initialContactId=\{directConversation\?\.contactId\} onBack=\{\(\) => setScreen\('home'\)\} onNav=\{setBuyerScreen\} \/>/, 'écran de messagerie acheteur');
+  expectSource(appSource, /<LiveMessagesScreen initialContact=\{directConversation\?\.contact\} initialContactId=\{directConversation\?\.contactId\} onBack=\{\(\) => setScreen\('dashboard'\)\} onNav=\{setBuyerScreen\} \/>/, 'écran de messagerie agriculteur');
 });
 
 test('état partagé : commande serveur, panier et produits protègent les parcours', () => {
@@ -107,7 +107,7 @@ test('expérience acheteur : les offres du jour, les toasts et les paiements loc
   expectSource(appSource, /scrollRef\.current\?\.scrollTo/, 'défilement automatique des offres');
   expectSource(appSource, /availability.*expiresAt/s, 'stock et validité affichés dans une offre');
   expectSource(contextSource, /originalPrice\?: number;\s+offerId\?: string;/s, 'prix promotionnel transporté dans le panier et la commande');
-  expectSource(appSource, /onProduct\(\{ \.\.\.offer\.product, price: Math\.round\(offer\.product\.price \* \(1 - offer\.discountPercent \/ 100\)\), originalPrice: offer\.product\.price, offerId: offer\.id \}\)/, 'prix remisé transmis en ouvrant une offre');
+  expectSource(appSource, /onProduct\(\{ \.\.\.offer\.product, offerId: offer\.id \}\)/, 'offre transmise avec product et offerId en ouvrant une offre');
   expectSource(appSource, /key=\{line\.id\}/, 'lignes standard et promotionnelles affichées séparément');
   expectSource(appSource, /ToastContext/, 'notifications temporaires non bloquantes');
   expectSource(appSource, /void signOut\(\)\.finally\(\(\) => setScreen\('auth-choice'\)\)/, 'fermeture de session et retour à l’authentification');
@@ -457,8 +457,8 @@ test('release : un drift Expo bloque la génération des fichiers', async () => 
                 'node scripts/check-expo-compatibility.mjs',
             },
             devDependencies: {
-              expo: '~54.0.37',
-              'expo-constants': '~18.0.14',
+              expo: '~57.0.0',
+              'expo-constants': '~57.0.20',
             },
           },
           null,
@@ -478,24 +478,25 @@ test('release : un drift Expo bloque la génération des fichiers', async () => 
       ),
       writeFile(
         join(expoDirectory, 'package.json'),
-        JSON.stringify({ name: 'expo', version: '54.0.36' }),
+        JSON.stringify({ name: 'expo', version: '57.0.1' }),
       ),
       writeFile(
         join(expoConstantsDirectory, 'package.json'),
-        JSON.stringify({ name: 'expo-constants', version: '18.0.14' }),
+        JSON.stringify({ name: 'expo-constants', version: '57.0.20' }),
       ),
     ]);
 
     const build = spawnSync('pnpm', ['run', 'build'], {
       cwd: fixtureDirectory,
       encoding: 'utf8',
+      shell: process.platform === 'win32',
     });
     const output = `${build.stdout ?? ''}${build.stderr ?? ''}`;
 
     assert.notEqual(build.status, 0, 'le build doit échouer sur le drift Expo');
     assert.match(
       output,
-      /expo: expected 54\.0\.37, installed 54\.0\.36/,
+      /expo: expected 57\.0\.0, installed 57\.0\.1/,
       'le message doit identifier les versions attendue et installée',
     );
     assert.equal(
@@ -538,8 +539,8 @@ test('release : un package Expo manquant bloque la génération des fichiers', a
                 'node scripts/check-expo-compatibility.mjs',
             },
             devDependencies: {
-              expo: '~54.0.37',
-              'expo-constants': '~18.0.14',
+              expo: '~57.0.0',
+              'expo-constants': '~57.0.20',
             },
           },
           null,
@@ -559,13 +560,14 @@ test('release : un package Expo manquant bloque la génération des fichiers', a
       ),
       writeFile(
         join(expoDirectory, 'package.json'),
-        JSON.stringify({ name: 'expo', version: '54.0.37' }),
+        JSON.stringify({ name: 'expo', version: '57.0.0' }),
       ),
     ]);
 
     const build = spawnSync('pnpm', ['run', 'build'], {
       cwd: fixtureDirectory,
       encoding: 'utf8',
+      shell: process.platform === 'win32',
     });
     const output = `${build.stdout ?? ''}${build.stderr ?? ''}`;
 

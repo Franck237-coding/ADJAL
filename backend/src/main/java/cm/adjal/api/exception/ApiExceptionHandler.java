@@ -13,9 +13,27 @@ import java.util.NoSuchElementException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    /**
+     * Image trop lourde : sans ce gestionnaire, Spring remontait la cause
+     * (IllegalStateException) et l'API répondait à tort « 409 Conflit ».
+     */
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    Map<String, String> uploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException exception) {
+        return Map.of("error", "Image trop lourde : 10 Mo maximum.");
+    }
+
+    @ExceptionHandler(org.springframework.web.multipart.MultipartException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    Map<String, String> invalidUpload(org.springframework.web.multipart.MultipartException exception) {
+        exception.printStackTrace(System.err);
+        return Map.of("error", "Envoi du fichier invalide : choisissez une image JPEG, PNG ou WebP.");
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     Map<String, String> badRequest(IllegalArgumentException exception) {
+        exception.printStackTrace(System.err);
         return Map.of("error", exception.getMessage() == null ? "Invalid request" : exception.getMessage());
     }
 
@@ -38,6 +56,7 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
     Map<String, String> invalidState(IllegalStateException exception) {
+        exception.printStackTrace(System.err);
         return Map.of("error", exception.getMessage() == null ? "Invalid state transition" : exception.getMessage());
     }
 
