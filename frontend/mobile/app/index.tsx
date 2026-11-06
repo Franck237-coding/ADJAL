@@ -6,6 +6,7 @@ import * as Linking from 'expo-linking';
 import { router } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Image,
@@ -21,26 +22,29 @@ import {
 } from 'react-native';
 import { KeyboardAvoidingView as KeyboardControllerAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { categories, Language, PaymentKind, Product, Role, useApp } from '@/src/app-context';
+import { categories, formatOrderCode, Language, PaymentKind, Product, Role, useApp } from '@/src/app-context';
 import { useColors } from '@/hooks/useColors';
 import { translateText } from '@/src/i18n';
 import {
   apiConfirmPasswordReset,
-  apiGetConversations,
-  apiGetMessages,
-  apiGetNotifications,
-  apiMarkConversationRead,
-  apiMarkNotificationRead,
-  apiReportFarmer,
-  apiRequestPasswordReset,
-  apiSendMessage,
-  apiAssetUrl,
-  apiUpdateProfile,
-  apiUploadProfileAvatar,
-  ApiConversation,
-  ApiMessage,
-  ApiNotification,
-} from '@/src/api-client';
+   apiCreateConversation,
+   apiGetActiveAccounts,
+   apiGetConversations,
+   apiGetMessages,
+   apiGetNotifications,
+   apiMarkConversationRead,
+   apiMarkNotificationRead,
+   apiReportFarmer,
+   apiRequestPasswordReset,
+   apiSendMessage,
+   apiAssetUrl,
+   apiUpdateProfile,
+   apiUploadProfileAvatar,
+   ApiAccount,
+   ApiConversation,
+   ApiMessage,
+   ApiNotification,
+ } from '@/src/api-client';
 
 const logo = require('@/assets/images/adjal-logo-transparent.png');
 const whiteLogo = require('@/assets/images/adjal-logo-white-transparent.png');
@@ -149,6 +153,25 @@ function normalizePhone(phone: string) {
   return phone.replace(/\D/g, '').replace(/^0+/, '');
 }
 
+function initials(name: string | null | undefined) {
+  return (name || '')
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+/**
+ * Contenu d'un avatar : la photo de profil si l'utilisateur en a une, sinon ses initiales.
+ * Se place dans n'importe quel conteneur d'avatar existant (rond).
+ */
+function AvatarFill({ name, uri, textStyle }: { name?: string | null; uri?: string | null; textStyle: object }) {
+  if (uri) return <Image source={{ uri }} style={[StyleSheet.absoluteFillObject, { borderRadius: 999 }]} resizeMode="cover" accessibilityLabel={name ? `Photo de ${name}` : 'Photo de profil'} />;
+  return <Text style={textStyle}>{initials(name)}</Text>;
+}
+
 async function selectImageFromLibrary(aspect: [number, number]) {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) throw new Error('permission-denied');
@@ -203,11 +226,17 @@ export default function AppIndex() {
 }
 
 function AppFlow() {
-  const { hydrated, hasSeenOnboarding, role, setRole, setHasSeenOnboarding, orders, language, profile, signOut, recordInteraction } = useApp();
+  const { hydrated, hasSeenOnboarding, role, setRole, setHasSeenOnboarding, orders, products, language, profile, signOut, recordInteraction, refreshOrders, refreshFarmerListings } = useApp();
   const [screen, setScreen] = useState<Screen>('onboarding');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
+  const [directConversation, setDirectConversation] = useState<{ contact?: string; contactId?: string; conversationId?: string } | null>(null);
+  // Écran où revenir après avoir ouvert une notification (liste des notifications).
+  const [returnScreen, setReturnScreen] = useState<Screen | null>(null);
+  // Écran d'où l'on a ouvert la liste des notifications.
+  const [notificationsOrigin, setNotificationsOrigin] = useState<Screen | null>(null);
+  const toast = useToast();
 
   if (!hydrated) return null;
 
@@ -223,7 +252,39 @@ function AppFlow() {
   if (screen === 'auth') return <EnhancedAuthScreen initialMode={role ? 'register' : 'login'} onBack={() => setScreen(role ? 'role' : 'auth-choice')} onForgot={() => setScreen('forgot-password')} onRegisterRequest={() => { setRole(null); setScreen('role'); }} onSuccess={(serverRole, registered) => setScreen(serverRole === 'farmer' ? 'dashboard' : registered || !profile.interests.length ? 'interest-onboarding' : 'home')} />;
   if (screen === 'interest-onboarding' && role === 'buyer') return <InterestOnboarding onDone={() => setScreen('home')} />;
 
-  if (screen === 'notifications') return <NotificationsScreen onBack={() => setScreen(role === 'farmer' ? 'farmer-profile' : 'profile')} />;
+  /** Ouvre la source d'une notification : commande, conversation ou produit. */
+  const openNotification = async (item: ApiNotification) => {
+    const resourceType = item.resourceType ?? (item.type === 'message' ? 'conversation' : item.type.includes('order') ? 'order' : item.type.includes('product') ? 'product' : '');
+    const resourceId = item.resourceId ?? undefined;
+    if (!resourceId) return false;
+    if (resourceType === 'order') {
+      await refreshOrders();
+      setSelectedOrderId(resourceId);
+      setReturnScreen('notifications');
+      setScreen('order-detail');
+      return true;
+    }
+    if (resourceType === 'conversation') {
+      setDirectConversation({ conversationId: resourceId });
+      setScreen('messages');
+      return true;
+    }
+    if (resourceType === 'product') {
+      if (role === 'farmer') {
+        await refreshFarmerListings();
+        setScreen('farmer-products');
+        return true;
+      }
+      const product = products.find((candidate) => candidate.id === resourceId);
+      if (product) {
+        setSelectedProduct(product);
+        setScreen('product');
+        return true;
+      }
+    }
+    return false;
+  };
+  if (screen === 'notifications') return <NotificationsScreen onOpen={openNotification} onBack={() => { setScreen(notificationsOrigin ?? (role === 'farmer' ? 'dashboard' : 'home')); setNotificationsOrigin(null); }} />;
 
   const goToProduct = (product: Product) => {
     setSelectedProduct(product);
@@ -234,14 +295,30 @@ function AppFlow() {
     setSelectedOrderId(id);
     setScreen('order-detail');
   };
-  const setBuyerScreen = (next: Screen) => setScreen(next);
+  const openOrderMessage = (orderId: string) => {
+    const order = orders.find((item) => item.id === orderId);
+    if (!order) return;
+    const contact = role === 'farmer' ? (order.buyerName ?? order.customer) : (order.sellerName ?? order.items[0]?.product.farmer ?? 'Agriculteur');
+     const contactId = role === 'farmer' ? order.buyerId : order.sellerId;
+     if (!contactId) {
+       Alert.alert('Messagerie', 'Impossible d\'ouvrir la conversation automatiquement. Sélectionnez un contact manuellement.', [{ text: 'OK', onPress: () => setScreen('messages') }]);
+       return;
+     }
+     setDirectConversation({ contact, contactId });
+     setScreen('messages');
+   };
+  const setBuyerScreen = (next: Screen) => {
+    if (next === 'messages') setDirectConversation(null);
+    if (next === 'notifications' && screen !== 'notifications') setNotificationsOrigin(screen);
+    setScreen(next);
+  };
   const selectedOrder = orders.find((order) => order.id === selectedOrderId);
-  const orderContact = selectedOrder ? (role === 'farmer' ? selectedOrder.customer : selectedOrder.items[0]?.product.farmer) : undefined;
+  const orderContact = selectedOrder ? (role === 'farmer' ? (selectedOrder.buyerName ?? selectedOrder.customer) : (selectedOrder.sellerName ?? selectedOrder.items[0]?.product.farmer ?? 'Agriculteur')) : undefined;
   const orderContactId = selectedOrder ? (role === 'farmer' ? selectedOrder.buyerId : selectedOrder.sellerId) : undefined;
   const confirmSignOut = () => {
     Alert.alert('Se déconnecter ?', 'Voulez-vous vraiment fermer votre session sur cet appareil ?', [
       { text: 'Annuler', style: 'cancel' },
-      { text: 'Se déconnecter', style: 'destructive', onPress: () => { void signOut().finally(() => setScreen('auth-choice')); } },
+      { text: 'Se déconnecter', style: 'destructive', onPress: () => { void signOut().finally(() => { setScreen('auth-choice'); toast('Vous êtes déconnecté.'); }); } },
     ]);
   };
 
@@ -252,9 +329,9 @@ function AppFlow() {
     if (screen === 'farmer-products') {
       return <FarmerProducts onAdd={() => { setProductToEdit(null); setScreen('product-form'); }} onEdit={(product) => { setProductToEdit(product); setScreen('product-form'); }} onNav={setBuyerScreen} />;
     }
-    if (screen === 'order-detail' && selectedOrderId) return <OrderDetailView orderId={selectedOrderId} farmer onBack={() => setScreen('farmer-orders')} onMessage={() => setScreen('messages')} />;
-    if (screen === 'farmer-orders') return <FarmerOrders onNav={setBuyerScreen} onOrder={(id) => { setSelectedOrderId(id); setScreen('order-detail'); }} />;
-    if (screen === 'messages') return <LiveMessagesScreen initialContact={orderContact} initialContactId={orderContactId} onBack={() => setScreen('dashboard')} onNav={setBuyerScreen} />;
+    if (screen === 'order-detail' && selectedOrderId) return <OrderDetailView orderId={selectedOrderId} farmer onBack={() => { setScreen(returnScreen ?? 'farmer-orders'); setReturnScreen(null); }} onMessage={() => { setDirectConversation({ contact: orderContact, contactId: orderContactId }); setScreen('messages'); }} />;
+    if (screen === 'farmer-orders') return <FarmerOrders onNav={setBuyerScreen} onOrder={(id) => { setSelectedOrderId(id); setScreen('order-detail'); }} onMessageOrder={openOrderMessage} />;
+    if (screen === 'messages') return <LiveMessagesScreen initialContact={directConversation?.contact} initialContactId={directConversation?.contactId} initialConversationId={directConversation?.conversationId} onBack={() => setScreen('dashboard')} onNav={setBuyerScreen} />;
     if (screen === 'sales') return <SalesScreen onNav={setBuyerScreen} />;
     if (screen === 'payment-methods') return <PaymentMethodsScreen farmer onBack={() => setScreen('farmer-profile')} onNav={setBuyerScreen} />;
     if (screen === 'security') return <SecurityScreen farmer onBack={() => setScreen('farmer-profile')} onPasswordReset={() => setScreen('forgot-password')} onSignOut={confirmSignOut} />;
@@ -270,13 +347,13 @@ function AppFlow() {
   if (screen === 'product' && selectedProduct) {
     return <ProductDetail product={selectedProduct} onBack={() => setScreen('home')} onProduct={goToProduct} />;
   }
-  if (screen === 'order-detail' && selectedOrderId) {
-    return <OrderDetailView orderId={selectedOrderId} onBack={() => setScreen('orders')} onMessage={() => setScreen('messages')} />;
-  }
+    if (screen === 'order-detail' && selectedOrderId) {
+      return <OrderDetailView orderId={selectedOrderId} onBack={() => { setScreen(returnScreen ?? 'orders'); setReturnScreen(null); }} onMessage={() => { setDirectConversation({ contact: orderContact, contactId: orderContactId }); setScreen('messages'); }} />;
+    }
   if (screen === 'cart') return <CartScreen onBack={() => setScreen('home')} onDone={(id) => { setSelectedOrderId(id); setScreen('order-detail'); }} />;
-  if (screen === 'messages') return <LiveMessagesScreen initialContact={orderContact} initialContactId={orderContactId} onBack={() => setScreen('home')} onNav={setBuyerScreen} />;
+  if (screen === 'messages') return <LiveMessagesScreen initialContact={directConversation?.contact} initialContactId={directConversation?.contactId} initialConversationId={directConversation?.conversationId} onBack={() => setScreen('home')} onNav={setBuyerScreen} />;
   if (screen === 'categories') return <CategoriesScreen onProduct={goToProduct} onNav={setBuyerScreen} />;
-  if (screen === 'orders') return <OrdersScreen onOrder={goToOrder} onNav={setBuyerScreen} />;
+  if (screen === 'orders') return <OrdersScreen onOrder={goToOrder} onNav={setBuyerScreen} onMessageOrder={openOrderMessage} />;
   if (screen === 'payment-methods') return <PaymentMethodsScreen onBack={() => setScreen('profile')} onNav={setBuyerScreen} />;
   if (screen === 'security') return <SecurityScreen onBack={() => setScreen('profile')} onPasswordReset={() => setScreen('forgot-password')} onSignOut={confirmSignOut} />;
   if (screen === 'interests') return <InterestsScreen onBack={() => setScreen('profile')} />;
@@ -390,8 +467,9 @@ function CountryPhoneField({ countryCode, phone, onCountryChange, onPhoneChange 
 function UnitSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const colors = useColors();
   const [open, setOpen] = useState(false);
-  const [custom, setCustom] = useState(value && !['kg', 'sac', 'caisse', 'litre', 'm²', 'ha', 'acre', 'are'].includes(value) ? value : '');
-  const units = ['kg', 'sac', 'caisse', 'litre', 'm²', 'ha', 'acre', 'are'];
+  // Unités de vente des produits agricoles (pas d'unités de surface).
+  const units = ['kg', 'unité', 'sac', 'caisse', 'filet', 'régime', 'tas', 'litre'];
+  const [custom, setCustom] = useState(value && !units.includes(value) ? value : '');
   const isOther = !units.includes(value);
   return <View>
     <Pressable style={stylesFor(colors).chip} onPress={() => setOpen((current) => !current)}><Text style={stylesFor(colors).chipText}>{isOther ? 'Autre' : value}</Text><Ionicons name="chevron-down" size={16} color={colors.primary} /></Pressable>
@@ -516,12 +594,13 @@ function ForgotPasswordScreen({ onBack, onResetSuccess }: { onBack: () => void; 
       }
       return;
     }
-    if (token.trim().length < 40) return setError('Saisissez le code de récupération reçu par email.');
+    const code = token.replace(/\s/g, '');
+    if (!/^\d{6}$/.test(code) && code.length < 40) return setError('Saisissez le code à 6 chiffres reçu par email.');
     if (newPassword.length < 10) return setError('Le nouveau mot de passe doit contenir au moins 10 caractères.');
     if (newPassword !== confirmation) return setError('Les deux mots de passe ne correspondent pas.');
     setLoading(true);
     try {
-      await apiConfirmPasswordReset(token.trim(), newPassword);
+      await apiConfirmPasswordReset(code, newPassword, email.trim());
       await onResetSuccess();
       Alert.alert('Mot de passe réinitialisé', 'Votre nouveau mot de passe est enregistré. Connectez-vous à nouveau.');
     } catch (caught) {
@@ -546,13 +625,15 @@ function ForgotPasswordScreen({ onBack, onResetSuccess }: { onBack: () => void; 
   const title = step === 'email' ? 'Mot de passe oublié' : 'Nouveau mot de passe';
   const subtitle = step === 'email'
     ? 'Saisissez votre adresse email. Pour votre sécurité, le résultat ne révèle jamais si un compte existe.'
-    : `Si cette adresse est associée à un compte, un code de récupération a été envoyé à ${email}. Il expire dans 15 minutes.`;
-  return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={stylesFor(colors).authScroll} keyboardShouldPersistTaps="handled"><Pressable onPress={step === 'email' ? onBack : () => { setError(''); setStep('email'); }} style={stylesFor(colors).backButton}><Ionicons name="arrow-back" size={21} color={colors.foreground} /></Pressable><View style={stylesFor(colors).resetProgress}><View style={[stylesFor(colors).resetProgressFill, { width: step === 'email' ? '50%' : '100%' }]} /></View><Text style={stylesFor(colors).authPageTitle}>{title}</Text><Text style={stylesFor(colors).authPageSubtitle}>{subtitle}</Text>{step === 'email' && <Field label="Adresse email" placeholder="vous@exemple.com" value={email} onChangeText={setEmail} keyboardType="email-address" icon="mail-outline" />}{step === 'reset' && <><Field label="Code de récupération" placeholder="Collez le code reçu par email" value={token} onChangeText={setToken} icon="shield-checkmark-outline" /><Pressable onPress={resend}><Text style={stylesFor(colors).linkText}>Renvoyer un code</Text></Pressable><Field label="Nouveau mot de passe" placeholder="Au moins 10 caractères" value={newPassword} onChangeText={setNewPassword} secureTextEntry icon="lock-closed-outline" /><Field label="Confirmer le mot de passe" placeholder="••••••••" value={confirmation} onChangeText={setConfirmation} secureTextEntry icon="lock-closed-outline" /></>}{error ? <Text style={stylesFor(colors).errorText}>{error}</Text> : null}<Pressable style={[stylesFor(colors).primaryButton, loading && { opacity: 0.65 }]} onPress={submit} disabled={loading}><Text style={stylesFor(colors).primaryButtonText}>{loading ? 'Veuillez patienter…' : step === 'email' ? 'Recevoir le code' : 'Réinitialiser le mot de passe'}</Text><Ionicons name="arrow-forward" size={18} color={colors.primaryForeground} /></Pressable></ScrollView></KeyboardAvoidingView>;
+    : `Si cette adresse est associée à un compte, un code à 6 chiffres a été envoyé à ${email}. Pensez à vérifier les spams. Il expire dans 15 minutes.`;
+  return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={stylesFor(colors).authScroll} keyboardShouldPersistTaps="handled"><Pressable onPress={step === 'email' ? onBack : () => { setError(''); setStep('email'); }} style={stylesFor(colors).backButton}><Ionicons name="arrow-back" size={21} color={colors.foreground} /></Pressable><View style={stylesFor(colors).resetProgress}><View style={[stylesFor(colors).resetProgressFill, { width: step === 'email' ? '50%' : '100%' }]} /></View><Text style={stylesFor(colors).authPageTitle}>{title}</Text><Text style={stylesFor(colors).authPageSubtitle}>{subtitle}</Text>{step === 'email' && <Field label="Adresse email" placeholder="vous@exemple.com" value={email} onChangeText={setEmail} keyboardType="email-address" icon="mail-outline" />}{step === 'reset' && <><Field label="Code de récupération" placeholder="Code à 6 chiffres" value={token} onChangeText={(value) => setToken(value.replace(/[^0-9]/g, '').slice(0, 6))} keyboardType="numeric" icon="shield-checkmark-outline" /><Pressable onPress={resend}><Text style={stylesFor(colors).linkText}>Renvoyer un code</Text></Pressable><Field label="Nouveau mot de passe" placeholder="Au moins 10 caractères" value={newPassword} onChangeText={setNewPassword} secureTextEntry icon="lock-closed-outline" /><Field label="Confirmer le mot de passe" placeholder="••••••••" value={confirmation} onChangeText={setConfirmation} secureTextEntry icon="lock-closed-outline" /></>}{error ? <Text style={stylesFor(colors).errorText}>{error}</Text> : null}<Pressable style={[stylesFor(colors).primaryButton, loading && { opacity: 0.65 }]} onPress={submit} disabled={loading}><Text style={stylesFor(colors).primaryButtonText}>{loading ? 'Veuillez patienter…' : step === 'email' ? 'Recevoir le code' : 'Réinitialiser le mot de passe'}</Text><Ionicons name="arrow-forward" size={18} color={colors.primaryForeground} /></Pressable></ScrollView></KeyboardAvoidingView>;
 }
 
 function Field({ label, placeholder, value, onChangeText, icon, secureTextEntry, keyboardType, testID }: { label: string; placeholder: string; value: string; onChangeText: (value: string) => void; icon: keyof typeof Ionicons.glyphMap; secureTextEntry?: boolean; keyboardType?: 'email-address' | 'phone-pad' | 'decimal-pad' | 'numeric' | 'default'; testID?: string }) {
   const colors = useColors();
-  return <View style={stylesFor(colors).field}><Text style={stylesFor(colors).fieldLabel}>{label}</Text><View style={stylesFor(colors).inputWrap}><Ionicons name={icon} size={18} color={colors.mutedForeground} /><TextInput testID={testID} style={stylesFor(colors).input} placeholder={placeholder} placeholderTextColor={colors.mutedForeground} value={value} onChangeText={onChangeText} secureTextEntry={secureTextEntry} keyboardType={keyboardType ?? 'default'} /></View></View>;
+  // Œil pour afficher / masquer le mot de passe.
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  return <View style={stylesFor(colors).field}><Text style={stylesFor(colors).fieldLabel}>{label}</Text><View style={stylesFor(colors).inputWrap}><Ionicons name={icon} size={18} color={colors.mutedForeground} /><TextInput testID={testID} style={stylesFor(colors).input} placeholder={placeholder} placeholderTextColor={colors.mutedForeground} value={value} onChangeText={onChangeText} secureTextEntry={secureTextEntry && !passwordVisible} autoCapitalize={secureTextEntry ? 'none' : undefined} autoCorrect={secureTextEntry ? false : undefined} keyboardType={keyboardType ?? 'default'} />{secureTextEntry && <Pressable onPress={() => setPasswordVisible((visible) => !visible)} hitSlop={10} accessibilityRole="button" accessibilityLabel={passwordVisible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}><Ionicons name={passwordVisible ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.mutedForeground} /></Pressable>}</View></View>;
 }
 
 function SocialButton({ icon, label }: { icon: keyof typeof Ionicons.glyphMap; label: string }) {
@@ -610,13 +691,13 @@ function NotificationCenter({ onBack }: { onBack: () => void }) {
 function BuyerHome({ onProduct, onNav }: { onProduct: (product: Product) => void; onNav: (screen: Screen) => void }) {
   const colors = useColors();
   const toast = useToast();
-  const { products, recommendations, role, cartCount, dailyOffers, profile, categories: categoryOptions, recordInteraction, notifications } = useApp();
+  const { products, recommendations, role, cartCount, dailyOffers, profile, categories: categoryOptions, recordInteraction, notifications, notificationsEnabled, refreshNotifications } = useApp();
   rememberCategoryImages(categoryOptions);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
   const matches = (product: Product) => (category === 'all' || product.category === category) && `${product.name} ${product.category} ${product.farmer} ${product.location}`.toLowerCase().includes(query.trim().toLowerCase());
   const recommendationSource = recommendations.length ? recommendations : products;
-  const filtered = useMemo(() => recommendationSource.filter(matches), [category, recommendationSource, query]);
+  const filtered = useMemo(() => recommendationSource.filter(matches), [category, recommendationSource, products]);
   const popular = useMemo(() => (recommendations.length ? recommendations : products.filter((product) => product.isPopular)).slice(0, 4), [products, recommendations]);
   const featured = query || category !== 'all' ? products.filter(matches).slice(0, 4) : popular;
   const offers = dailyOffers.map((offer) => ({ ...offer, product: products.find((product) => product.id === offer.productId) })).filter((offer): offer is typeof offer & { product: Product } => !!offer.product && offer.product.stock > 0);
@@ -626,11 +707,17 @@ function BuyerHome({ onProduct, onNav }: { onProduct: (product: Product) => void
     const match = products.find((product) => `${product.name} ${product.category} ${product.farmer} ${product.location}`.toLowerCase().includes(normalized));
     if (match) void recordInteraction(match.id, 'search').catch(() => undefined);
   }, [products, query, recordInteraction, role]);
+  useEffect(() => {
+    if (!notificationsEnabled) return;
+    void refreshNotifications();
+    const timer = setInterval(() => void refreshNotifications(), 15000);
+    return () => clearInterval(timer);
+  }, [notificationsEnabled, refreshNotifications]);
   const cartButton = <Pressable accessibilityLabel="Mon panier" style={stylesFor(colors).cartHeader} onPress={() => onNav('cart')}><Ionicons name="cart-outline" size={21} color={colors.primary} />{cartCount > 0 && <View style={stylesFor(colors).countBadge}><Text style={stylesFor(colors).countText}>{cartCount}</Text></View>}</Pressable>;
-  return <View style={stylesFor(colors).screen}><AppHeader title={`Bonjour, ${profile.name.split(' ')[0]} 👋`} location={profile.location} subtitle="Votre marché agricole local" right={<View style={stylesFor(colors).headerActions}>{cartButton}<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('notifications')}><Ionicons name="notifications-outline" size={19} color={colors.primary} /><View style={stylesFor(colors).unreadBadge}><Text style={stylesFor(colors).unreadText}>{notifications.filter((item) => !item.readAt).length}</Text></View></Pressable><Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('profile')}><Ionicons name="person-outline" size={19} color={colors.primary} /></Pressable></View>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} showsVerticalScrollIndicator={false}><View style={stylesFor(colors).searchBar}><Ionicons name="search" size={20} color={colors.mutedForeground} /><TextInput value={query} onChangeText={setQuery} placeholder="Rechercher un produit ou un agriculteur" placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).searchInput} /><Ionicons name="options-outline" size={20} color={colors.primary} /></View><DailyOffersCarousel offers={offers} onProduct={onProduct} /><SectionHeader title="Catégories" action="Voir tout" onPress={() => onNav('categories')} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).categoryScroll}>{categoryOptions.slice(1).map((item) => <Pressable key={item.id} style={stylesFor(colors).categoryItem} onPress={() => onNav('categories')}><Image source={{ uri: categoryImageFor(item.slug) }} style={stylesFor(colors).categoryImage} /><Text style={stylesFor(colors).categoryLabel}>{item.label}</Text></Pressable>)}</ScrollView><SectionHeader title="Produits vedettes" action="Voir tout" onPress={() => onNav('categories')} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).horizontalList}>{featured.map((product) => <ProductCard key={product.id} product={product} compact onPress={() => onProduct(product)} />)}</ScrollView><SectionHeader title="Recommandés" action={`${filtered.length} produits`} /><View style={stylesFor(colors).recommendList}>{filtered.slice(0, 5).map((product) => <RecommendationCard key={product.id} product={product} onPress={() => onProduct(product)} />)}</View>{filtered.length === 0 && <EmptyState icon="search-outline" title="Aucun produit trouvé" body="Essayez une autre recherche ou une autre catégorie." />}<SectionHeader title="Prix du marché" action={`${products.length} produits`} onPress={() => onNav('categories')} /><View style={stylesFor(colors).marketCard}><View style={stylesFor(colors).marketHeader}><View><Text style={stylesFor(colors).marketKicker}>PRIX DU CATALOGUE</Text><Text style={stylesFor(colors).marketTitle}>Produits actuellement disponibles</Text></View><Ionicons name="storefront-outline" size={25} color={colors.primary} /></View><View style={stylesFor(colors).marketRows}>{products.filter((product) => product.stock > 0).slice(0, 3).map((product) => <MarketPrice key={product.id} name={product.name} price={money(product.price)} trend={product.location} />)}</View></View></ScrollView><BottomNav items={buyerTabs} active="home" onPress={(key) => onNav(key)} /></View>;
+  return <View style={stylesFor(colors).screen}><AppHeader title={`Bonjour, ${profile.name.split(' ')[0]} 👋`} location={profile.location} subtitle="Votre marché agricole local" right={<View style={stylesFor(colors).headerActions}>{cartButton}<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('notifications')}><Ionicons name="notifications-outline" size={19} color={colors.primary} /><View style={stylesFor(colors).unreadBadge}><Text style={stylesFor(colors).unreadText}>{notifications.filter((item) => !item.readAt).length}</Text></View></Pressable><Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('profile')}><Ionicons name="person-outline" size={19} color={colors.primary} /></Pressable></View>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} showsVerticalScrollIndicator={false}><View style={stylesFor(colors).searchBar}><Ionicons name="search" size={20} color={colors.mutedForeground} /><TextInput value={query} onChangeText={setQuery} placeholder="Rechercher un produit ou un agriculteur" placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).searchInput} /><Ionicons name="options-outline" size={20} color={colors.primary} /></View><DailyOffersCarousel offers={offers} onProduct={onProduct} /><SectionHeader title="Catégories" action="Voir tout" onPress={() => onNav('categories')} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).categoryScroll}>{categoryOptions.slice(1).map((item) => <Pressable key={item.id} style={stylesFor(colors).categoryItem} onPress={() => onNav('categories')}><Image source={{ uri: categoryImageFor(item) }} style={stylesFor(colors).categoryImage} /><Text style={stylesFor(colors).categoryLabel}>{item.label}</Text></Pressable>)}</ScrollView><SectionHeader title="Produits vedettes" action="Voir tout" onPress={() => onNav('categories')} /><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).horizontalList}>{featured.map((product) => <ProductCard key={product.id} product={product} compact onPress={() => onProduct(product)} />)}</ScrollView><SectionHeader title="Recommandés" action={`${filtered.length} produits`} /><View style={stylesFor(colors).recommendList}>{filtered.slice(0, 5).map((product) => <RecommendationCard key={product.id} product={product} onPress={() => onProduct(product)} />)}</View>{filtered.length === 0 && <EmptyState icon="search-outline" title="Aucun produit trouvé" body="Essayez une autre recherche ou une autre catégorie." />}<SectionHeader title="Prix du marché" action={`${products.length} produits`} onPress={() => onNav('categories')} /><View style={stylesFor(colors).marketCard}><View style={stylesFor(colors).marketHeader}><View><Text style={stylesFor(colors).marketKicker}>PRIX DU CATALOGUE</Text><Text style={stylesFor(colors).marketTitle}>Produits actuellement disponibles</Text></View><Ionicons name="storefront-outline" size={25} color={colors.primary} /></View><View style={stylesFor(colors).marketRows}>{products.filter((product) => product.stock > 0).slice(0, 3).map((product) => <MarketPrice key={product.id} name={product.name} price={money(product.price)} trend={product.location} />)}</View></View></ScrollView><BottomNav items={buyerTabs} active="home" onPress={(key) => onNav(key)} /></View>;
 }
 
-function DailyOffersCarousel({ offers, onProduct }: { offers: Array<{ id: string; discountPercent: number; label: string; availability: string; expiresAt: string; product: Product }>; onProduct: (product: Product) => void }) {
+function DailyOffersCarousel({ offers, onProduct }: { offers: Array<{ id: string; label: string; availability: string; expiresAt: string; product: Product }>; onProduct: (product: Product) => void }) {
   const colors = useColors();
   const [activeIndex, setActiveIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
@@ -646,7 +733,7 @@ function DailyOffersCarousel({ offers, onProduct }: { offers: Array<{ id: string
     return () => clearInterval(timer);
   }, [offers.length]);
   if (!offers.length) return null;
-  return <View style={stylesFor(colors).offersBlock}><ScrollView ref={scrollRef} horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={(event) => setActiveIndex(Math.round(event.nativeEvent.contentOffset.x / 328))} contentContainerStyle={stylesFor(colors).offersScroll}>{offers.map((offer) => <Pressable key={offer.id} style={stylesFor(colors).offerCard} onPress={() => onProduct({ ...offer.product, price: Math.round(offer.product.price * (1 - offer.discountPercent / 100)), originalPrice: offer.product.price, offerId: offer.id })}><Image source={{ uri: offer.product.image }} style={stylesFor(colors).offerImage} /><LinearGradient colors={['rgba(12,56,20,0.05)', 'rgba(12,56,20,0.88)']} style={stylesFor(colors).offerOverlay}><View style={stylesFor(colors).offerTopRow}><View style={stylesFor(colors).offerBadge}><Text style={stylesFor(colors).offerBadgeText}>OFFRE DU JOUR</Text></View><View style={stylesFor(colors).offerDiscount}><Text style={stylesFor(colors).offerDiscountText}>-{offer.discountPercent}%</Text></View></View><View><Text style={stylesFor(colors).offerLabel}>{offer.label}</Text><Text style={stylesFor(colors).offerProductName}>{offer.product.name}</Text><Text style={stylesFor(colors).offerMeta}>{offer.availability} · jusqu’à {offer.expiresAt}</Text><View style={stylesFor(colors).offerPriceRow}><Text style={stylesFor(colors).offerPrice}>{money(Math.round(offer.product.price * (1 - offer.discountPercent / 100)))}</Text><Text style={stylesFor(colors).offerOriginalPrice}>{money(offer.product.price)}</Text><Ionicons name="arrow-forward-circle" size={25} color={colors.primaryForeground} /></View></View></LinearGradient></Pressable>)}</ScrollView><View style={stylesFor(colors).offerDots}>{offers.map((offer, index) => <View key={offer.id} style={[stylesFor(colors).offerDot, index === activeIndex && stylesFor(colors).offerDotActive]} />)}</View></View>;
+  return <View style={stylesFor(colors).offersBlock}><ScrollView ref={scrollRef} horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={(event) => setActiveIndex(Math.round(event.nativeEvent.contentOffset.x / 328))} contentContainerStyle={stylesFor(colors).offersScroll}>{offers.map((offer) => <Pressable key={offer.id} style={stylesFor(colors).offerCard} onPress={() => onProduct({ ...offer.product, offerId: offer.id })}><Image source={{ uri: offer.product.image }} style={stylesFor(colors).offerImage} /><LinearGradient colors={['rgba(12,56,20,0.05)', 'rgba(12,56,20,0.88)']} style={stylesFor(colors).offerOverlay}><View style={stylesFor(colors).offerTopRow}><View style={stylesFor(colors).offerBadge}><Text style={stylesFor(colors).offerBadgeText}>OFFRE DU JOUR</Text></View></View><View><Text style={stylesFor(colors).offerLabel}>{offer.label}</Text><Text style={stylesFor(colors).offerProductName}>{offer.product.name}</Text><Text style={stylesFor(colors).offerMeta}>{offer.availability} · jusqu’à {offer.expiresAt}</Text><View style={stylesFor(colors).offerPriceRow}><Text style={stylesFor(colors).offerPrice}>{money(offer.product.price)}</Text><Ionicons name="arrow-forward-circle" size={25} color={colors.primaryForeground} /></View></View></LinearGradient></Pressable>)}</ScrollView><View style={stylesFor(colors).offerDots}>{offers.map((offer, index) => <View key={offer.id} style={[stylesFor(colors).offerDot, index === activeIndex && stylesFor(colors).offerDotActive]} />)}</View></View>;
 }
 
 function MarketPrice({ name, price, trend }: { name: string; price: string; trend: string }) {
@@ -654,38 +741,81 @@ function MarketPrice({ name, price, trend }: { name: string; price: string; tren
   return <View style={stylesFor(colors).marketRow}><View style={stylesFor(colors).marketProductIcon}><Ionicons name="leaf-outline" size={16} color={colors.primary} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{name}</Text><Text style={stylesFor(colors).productMeta}>Prix moyen au marché</Text></View><View style={stylesFor(colors).alignEnd}><Text style={stylesFor(colors).miniPrice}>{price}</Text><Text style={[stylesFor(colors).marketTrend, { color: trend.startsWith('+') ? colors.primary : colors.orange }]}>{trend}</Text></View></View>;
 }
 
-function LiveMessagesScreen({ onBack, onNav, initialContact, initialContactId }: { onBack: () => void; onNav: (screen: Screen) => void; initialContact?: string; initialContactId?: string }) {
+function LiveMessagesScreen({ onBack, onNav, initialContact, initialContactId, initialConversationId }: { onBack: () => void; onNav: (screen: Screen) => void; initialContact?: string; initialContactId?: string; initialConversationId?: string }) {
   const colors = useColors();
-  const { role, accessToken, profile } = useApp();
+  const { role, accessToken, userId, profile } = useApp();
   const [conversations, setConversations] = useState<ApiConversation[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Ouverture directe d'une conversation depuis une notification.
+  const [selectedId, setSelectedId] = useState<string | null>(initialConversationId ?? null);
+  const [dismissedInitialId, setDismissedInitialId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ApiMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showNewChat, setShowNewChat] = useState(false);
+  const [activeAccounts, setActiveAccounts] = useState<ApiAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
   const [reportTarget, setReportTarget] = useState<{ farmerId: string; reason: 'fraud' | 'harassment' | 'unsafe_product' | 'spam' | 'other' } | null>(null);
   const [reportText, setReportText] = useState('');
   const [reportSubmitting, setReportSubmitting] = useState(false);
-  const conversationCreatedRef = useRef(false);
+  const localConversationIds = useRef<Set<string>>(new Set());
+
+  const ensureConversation = async (contactId: string, contactName?: string, onError?: (msg: string) => void) => {
+    if (!accessToken || !contactId) {
+      onError?.('ID de contact manquant');
+      return;
+    }
+    const existing = conversations.find((conversation) => conversation.otherUserId === contactId);
+    if (existing) {
+      setSelectedId(existing.id);
+      return;
+    }
+    try {
+      const created = await apiCreateConversation(accessToken, contactId);
+      localConversationIds.current.add(created.id);
+      setConversations((current) => [created, ...current]);
+      setSelectedId(created.id);
+    } catch (error) {
+      onError?.(error instanceof Error ? error.message : 'Erreur de connexion');
+    }
+  };
+
+  useEffect(() => {
+    if (!accessToken || !initialContactId || selectedId) return;
+    if (dismissedInitialId === initialContactId) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      void ensureConversation(initialContactId, initialContact, (msg) => {
+        if (cancelled) return;
+        setError(msg);
+      });
+    }, 100);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [accessToken, initialContactId, selectedId, dismissedInitialId]);
 
   const refresh = async () => {
     if (!accessToken) return;
     try {
       const conversationResult = await apiGetConversations(accessToken);
-      setConversations(conversationResult);
-      if (!selectedId && initialContact && !conversationCreatedRef.current) {
-        const matching = conversationResult.find((conversation) => conversation.otherUserName === initialContact);
+      setConversations((current) => {
+        const apiById = new Map(conversationResult.map((conversation) => [conversation.id, conversation]));
+        const merged = [...conversationResult];
+        for (const local of current) {
+          if (!apiById.has(local.id) && localConversationIds.current.has(local.id)) {
+            merged.push(local);
+          }
+        }
+        return merged;
+      });
+      if (!selectedId && initialContactId && conversations.length > 0 && !localConversationIds.current.size) {
+        const matching = conversationResult.find((conversation) => conversation.otherUserId === initialContactId);
         if (matching) {
           setSelectedId(matching.id);
-        } else if (initialContactId) {
-          conversationCreatedRef.current = true;
-          try {
-            const created = await apiCreateConversation(accessToken, initialContactId);
-            setSelectedId(created.id);
-            setConversations((current) => [created, ...current]);
-          } catch {
-            conversationCreatedRef.current = false;
-          }
+        } else {
+          void ensureConversation(initialContactId, initialContact);
         }
       }
     } catch {
@@ -722,6 +852,20 @@ function LiveMessagesScreen({ onBack, onNav, initialContact, initialContactId }:
     };
   }, [accessToken, selectedId]);
 
+  const loadActiveAccounts = async () => {
+    if (!accessToken || !userId) return;
+    setAccountsLoading(true);
+    try {
+      const accounts = await apiGetActiveAccounts(accessToken);
+      const filtered = accounts.filter((account) => account.id !== userId);
+      setActiveAccounts(filtered);
+    } catch (error) {
+      Alert.alert('Erreur', error instanceof Error ? error.message : 'Impossible de charger la liste des utilisateurs.');
+    } finally {
+      setAccountsLoading(false);
+    }
+  };
+
   const selected = conversations.find((conversation) => conversation.id === selectedId);
   const openAccount = async (accountId: string) => {
     if (!accessToken) return;
@@ -744,15 +888,19 @@ function LiveMessagesScreen({ onBack, onNav, initialContact, initialContactId }:
     }
   };
 
-  if (selected) {
+  if (selectedId && (selected || initialContact)) {
+    const contactName = selected?.otherUserName ?? initialContact ?? 'Contact';
     return <>
       <ChatThread
-        contact={selected.otherUserName}
-        messages={messages.map((message) => message.body)}
+        contact={contactName}
+        avatarUrl={apiAssetUrl(selected?.otherUserAvatarUrl ?? selected?.avatarUrl)}
+        messages={[...messages]
+          .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+          .map((message) => ({ id: message.id, body: message.body, mine: Boolean(userId) && message.senderId === userId, createdAt: message.createdAt }))}
         draft={draft}
         onDraftChange={setDraft}
         onSend={() => void send()}
-        onBack={() => setSelectedId(null)}
+        onBack={() => { setSelectedId(null); localConversationIds.current.clear(); if (initialContactId) setDismissedInitialId(initialContactId); }}
         onReport={role === 'buyer' ? reportFarmer : undefined}
       />
       <Modal visible={Boolean(reportTarget)} transparent animationType="fade" onRequestClose={() => setReportTarget(null)}>
@@ -784,14 +932,32 @@ function LiveMessagesScreen({ onBack, onNav, initialContact, initialContactId }:
     </>;
   }
 
+  if (initialContactId && !selectedId && dismissedInitialId !== initialContactId) {
+    return (
+      <View style={stylesFor(colors).screen}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24 }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <NativeText style={{ color: colors.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 15 }}>Ouverture de la conversation...</NativeText>
+          {error ? (
+            <Pressable onPress={() => { setError(null); void ensureConversation(initialContactId!, initialContact); }} style={{ paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.primary, borderRadius: 10, marginTop: 12 }}>
+              <NativeText style={{ color: colors.primaryForeground, fontWeight: '600' }}>Réessayer</NativeText>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
   function reportFarmer() {
-    const target = conversations.find((conversation) => conversation.id === selectedId);
+    const target = conversations.find((conversation) => conversation.id === selectedId) ?? selected;
     if (!target || role !== 'buyer' || !accessToken) return;
+    const farmerId = target.otherUserId;
+    if (!farmerId) return;
     Alert.alert('Signaler cet agriculteur', 'Choisissez une raison.', [
-      { text: 'Fraude ou paiement suspect', onPress: () => setReportTarget({ farmerId: target.otherUserId, reason: 'fraud' }) },
-      { text: 'Harcèlement ou comportement déplacé', onPress: () => setReportTarget({ farmerId: target.otherUserId, reason: 'harassment' }) },
-      { text: 'Produit dangereux ou non conforme', onPress: () => setReportTarget({ farmerId: target.otherUserId, reason: 'unsafe_product' }) },
-      { text: 'Spam ou autre abus', onPress: () => setReportTarget({ farmerId: target.otherUserId, reason: 'other' }) },
+      { text: 'Fraude ou paiement suspect', onPress: () => setReportTarget({ farmerId, reason: 'fraud' }) },
+      { text: 'Harcèlement ou comportement déplacé', onPress: () => setReportTarget({ farmerId, reason: 'harassment' }) },
+      { text: 'Produit dangereux ou non conforme', onPress: () => setReportTarget({ farmerId, reason: 'unsafe_product' }) },
+      { text: 'Spam ou autre abus', onPress: () => setReportTarget({ farmerId, reason: 'other' }) },
       { text: 'Annuler', style: 'cancel' },
     ]);
   }
@@ -807,12 +973,54 @@ function LiveMessagesScreen({ onBack, onNav, initialContact, initialContactId }:
     <ScrollView contentContainerStyle={stylesFor(colors).messageReferenceList}>
       {loading && !conversations.length ? <Text style={stylesFor(colors).productMeta}>Chargement des conversations…</Text> : null}
       {conversations.map((conversation) => <Pressable key={conversation.id} style={stylesFor(colors).messageReferenceRow} onPress={() => setSelectedId(conversation.id)}>
-        <View style={stylesFor(colors).messageAvatar}><Text style={stylesFor(colors).largeAvatarText}>{conversation.otherUserName.split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text><View style={stylesFor(colors).messageOnlineDot} /></View>
-        <View style={stylesFor(colors).flex}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).messageReferenceName}>{conversation.otherUserName}</Text><Text style={stylesFor(colors).messageReferenceTime}>Récent</Text></View><Text style={stylesFor(colors).messageReferenceRole}>Contact A DJAL</Text><Text style={stylesFor(colors).messageReferencePreview}>Ouvrir la conversation</Text></View>
+        <View style={stylesFor(colors).messageAvatar}><AvatarFill name={conversation.otherUserName} uri={apiAssetUrl(conversation.otherUserAvatarUrl ?? conversation.avatarUrl)} textStyle={stylesFor(colors).largeAvatarText} /><View style={stylesFor(colors).messageOnlineDot} /></View>
+        <View style={stylesFor(colors).flex}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).messageReferenceName}>{conversation.otherUserName || 'Contact'}</Text><Text style={stylesFor(colors).messageReferenceTime}>Récent</Text></View><Text style={stylesFor(colors).messageReferenceRole}>Contact A DJAL</Text><Text style={stylesFor(colors).messageReferencePreview}>Ouvrir la conversation</Text></View>
       </Pressable>)}
-      {!conversations.length && <EmptyState icon="chatbubbles-outline" title="Aucune conversation" body={`Bonjour ${profile.name}, vos conversations avec les autres utilisateurs apparaîtront ici.`} />}
+      {!conversations.length && !loading && <EmptyState icon="chatbubbles-outline" title="Aucune conversation" body={`Bonjour ${profile.name}, vos conversations avec les autre utilisateurs apparaîtront ici.`} />}
     </ScrollView>
+    <Pressable style={{ position: 'absolute', bottom: 80, right: 20, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 }} onPress={() => { setShowNewChat(true); void loadActiveAccounts(); }}>
+      <Ionicons name="add" size={28} color={colors.primaryForeground} />
+    </Pressable>
     <BottomNav items={role === 'farmer' ? farmerTabs : buyerTabs} active="messages" onPress={onNav} />
+    <Modal visible={showNewChat} transparent animationType="fade" onRequestClose={() => setShowNewChat(false)}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+        <View style={{ maxHeight: '70%', backgroundColor: colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <Text style={stylesFor(colors).h3}>Nouvelle conversation</Text>
+            <Pressable onPress={() => setShowNewChat(false)} style={{ padding: 8 }}><Ionicons name="close" size={24} color={colors.mutedForeground} /></Pressable>
+          </View>
+          {accountsLoading ? (
+            <View style={{ padding: 20, alignItems: 'center' }}><ActivityIndicator size="large" color={colors.primary} /><Text style={{ color: colors.mutedForeground, marginTop: 12 }}>Chargement des utilisateurs…</Text></View>
+          ) : (
+            <FlatList
+              data={activeAccounts}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="always"
+              renderItem={({ item }) => (
+                <Pressable
+                  style={[stylesFor(colors).messageReferenceRow, { borderBottomWidth: 1, borderBottomColor: colors.border }]}
+                  onPress={async () => {
+                    setShowNewChat(false);
+                    setSelectedId(null);
+                    await ensureConversation(item.id, item.name, (msg) => Alert.alert('Erreur', msg));
+                  }}
+                >
+                  <View style={stylesFor(colors).messageAvatar}>
+                    <AvatarFill name={item.name} uri={apiAssetUrl(item.avatarUrl)} textStyle={stylesFor(colors).largeAvatarText} />
+                    <View style={stylesFor(colors).messageOnlineDot} />
+                  </View>
+                  <View style={stylesFor(colors).flex}>
+                    <Text style={stylesFor(colors).messageReferenceName}>{item.name || 'Contact'}</Text>
+                    <Text style={stylesFor(colors).messageReferenceRole}>{item.role === 'farmer' ? 'Agriculteur' : 'Acheteur'}</Text>
+                  </View>
+                </Pressable>
+              )}
+              ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: 'center', marginTop: 20 }}>Aucun utilisateur disponible</Text>}
+            />
+          )}
+        </View>
+      </View>
+    </Modal>
   </View>;
 }
 
@@ -840,19 +1048,42 @@ function MessagesScreen({ onBack, onNav, initialContact }: { onBack: () => void;
     setDraft('');
   };
   if (selected) return <ChatThread contact={selected} messages={messages[selected] ?? []} draft={draft} onDraftChange={setDraft} onSend={send} onBack={() => setSelected(null)} />;
-  if (selected) return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={stylesFor(colors).chatHeader}><Pressable onPress={() => setSelected(null)} style={stylesFor(colors).chatBack}><Ionicons name="arrow-back" size={21} color={colors.foreground} /></Pressable><View style={stylesFor(colors).chatAvatar}><Text style={stylesFor(colors).largeAvatarText}>{selected.split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text><View style={stylesFor(colors).onlineDot} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{selected}</Text><Text style={stylesFor(colors).onlineText}>● en ligne</Text></View><Pressable style={stylesFor(colors).chatCall} onPress={() => Alert.alert('Appel', `Appel simulé avec ${selected}.`)}><Ionicons name="call-outline" size={20} color={colors.foreground} /></Pressable></View><ScrollView contentContainerStyle={stylesFor(colors).chatContent}>{(messages[selected] ?? []).map((message, index) => <View key={`${message}-${index}`} style={[stylesFor(colors).messageBubble, index % 2 === 1 && stylesFor(colors).messageBubbleMine]}><Text style={stylesFor(colors).messageText}>{message}</Text><Text style={stylesFor(colors).messageTime}>{index === 0 ? '7:10' : 'Maintenant'}</Text></View>)}</ScrollView><View style={stylesFor(colors).composer}><Pressable style={stylesFor(colors).composerIcon} onPress={() => Alert.alert('Pièce jointe', 'La sélection de fichiers sera disponible prochainement.')}><Ionicons name="attach-outline" size={22} color={colors.foreground} /></Pressable><View style={stylesFor(colors).composerField}><TextInput value={draft} onChangeText={setDraft} placeholder="Écrire un message..." placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).composerInput} /><Pressable onPress={() => Alert.alert('Emoji', 'Choisissez un emoji dans votre clavier.')}><Ionicons name="happy-outline" size={20} color={colors.mutedForeground} /></Pressable></View><Pressable onPress={send} style={stylesFor(colors).sendButton}><Ionicons name="send" size={18} color={colors.primaryForeground} /></Pressable></View></KeyboardAvoidingView>;
-  return <View style={stylesFor(colors).screen}><View style={stylesFor(colors).messageTopBar}><Image source={logo} style={stylesFor(colors).messageLogo} resizeMode="contain" /><View style={stylesFor(colors).marketBadge}><Text style={stylesFor(colors).marketBadgeText}>Marché agricole</Text></View></View><View style={stylesFor(colors).messageReferenceSearch}><Ionicons name="search" size={23} color={colors.mutedForeground} /><TextInput value={query} onChangeText={setQuery} placeholder="Rechercher un produit ou une catégorie" placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).searchInput} autoCorrect={false} clearButtonMode="while-editing" /></View><ScrollView contentContainerStyle={stylesFor(colors).messageReferenceList}>{visibleContacts.length ? visibleContacts.map((contact, index) => <Pressable key={contact} style={stylesFor(colors).messageReferenceRow} onPress={() => setSelected(contact)}><View style={stylesFor(colors).messageAvatar}><Text style={stylesFor(colors).largeAvatarText}>{contact.split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text>{(index === 0 || index === 3) && <View style={stylesFor(colors).unreadBadge}><Text style={stylesFor(colors).unreadText}>{index === 0 ? 2 : 1}</Text></View>}<View style={stylesFor(colors).messageOnlineDot} /></View><View style={stylesFor(colors).flex}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).messageReferenceName}>{contact}</Text><Text style={stylesFor(colors).messageReferenceTime}>{index === 0 ? '9:15' : index === 1 ? '8:05' : index < 3 ? 'Hier' : 'Samedi'}</Text></View><Text style={stylesFor(colors).messageReferenceRole}>{contact === 'A djal support' ? 'Service client' : role === 'farmer' ? 'Acheteur' : 'Agriculteur'}</Text><Text style={stylesFor(colors).messageReferencePreview} numberOfLines={1}>{messages[contact]?.at(-1) ?? 'Démarrer une conversation'}</Text></View></Pressable>) : <EmptyState icon="search-outline" title="Aucune conversation trouvée" body="Essayez le nom d’un contact ou un mot du dernier message." />}</ScrollView><BottomNav items={role === 'farmer' ? farmerTabs : buyerTabs} active="messages" onPress={onNav} /></View>;
+  if (selected) return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={stylesFor(colors).chatHeader}><Pressable onPress={() => setSelected(null)} style={stylesFor(colors).chatBack}><Ionicons name="arrow-back" size={21} color={colors.foreground} /></Pressable><View style={stylesFor(colors).chatAvatar}><Text style={stylesFor(colors).largeAvatarText}>{initials(selected)}</Text><View style={stylesFor(colors).onlineDot} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{selected}</Text><Text style={stylesFor(colors).onlineText}>● en ligne</Text></View><Pressable style={stylesFor(colors).chatCall} onPress={() => Alert.alert('Appel', `Appel simulé avec ${selected}.`)}><Ionicons name="call-outline" size={20} color={colors.foreground} /></Pressable></View><ScrollView contentContainerStyle={stylesFor(colors).chatContent}>{(messages[selected] ?? []).map((message, index) => <View key={`${message}-${index}`} style={[stylesFor(colors).messageBubble, index % 2 === 1 && stylesFor(colors).messageBubbleMine]}><Text style={stylesFor(colors).messageText}>{message}</Text><Text style={stylesFor(colors).messageTime}>{index === 0 ? '7:10' : 'Maintenant'}</Text></View>)}</ScrollView><View style={stylesFor(colors).composer}><Pressable style={stylesFor(colors).composerIcon} onPress={() => Alert.alert('Pièce jointe', 'La sélection de fichiers sera disponible prochainement.')}><Ionicons name="attach-outline" size={22} color={colors.foreground} /></Pressable><View style={stylesFor(colors).composerField}><TextInput value={draft} onChangeText={setDraft} placeholder="Écrire un message..." placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).composerInput} /><Pressable onPress={() => Alert.alert('Emoji', 'Choisissez un emoji dans votre clavier.')}><Ionicons name="happy-outline" size={20} color={colors.mutedForeground} /></Pressable></View><Pressable onPress={send} style={stylesFor(colors).sendButton}><Ionicons name="send" size={18} color={colors.primaryForeground} /></Pressable></View></KeyboardAvoidingView>;
+  return <View style={stylesFor(colors).screen}><View style={stylesFor(colors).messageTopBar}><Image source={logo} style={stylesFor(colors).messageLogo} resizeMode="contain" /><View style={stylesFor(colors).marketBadge}><Text style={stylesFor(colors).marketBadgeText}>Marché agricole</Text></View></View><View style={stylesFor(colors).messageReferenceSearch}><Ionicons name="search" size={23} color={colors.mutedForeground} /><TextInput value={query} onChangeText={setQuery} placeholder="Rechercher un produit ou une catégorie" placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).searchInput} autoCorrect={false} clearButtonMode="while-editing" /></View><ScrollView contentContainerStyle={stylesFor(colors).messageReferenceList}>{visibleContacts.length ? visibleContacts.map((contact, index) => <Pressable key={contact} style={stylesFor(colors).messageReferenceRow} onPress={() => setSelected(contact)}><View style={stylesFor(colors).messageAvatar}><Text style={stylesFor(colors).largeAvatarText}>{initials(contact)}</Text>{(index === 0 || index === 3) && <View style={stylesFor(colors).unreadBadge}><Text style={stylesFor(colors).unreadText}>{index === 0 ? 2 : 1}</Text></View>}<View style={stylesFor(colors).messageOnlineDot} /></View><View style={stylesFor(colors).flex}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).messageReferenceName}>{contact}</Text><Text style={stylesFor(colors).messageReferenceTime}>{index === 0 ? '9:15' : index === 1 ? '8:05' : index < 3 ? 'Hier' : 'Samedi'}</Text></View><Text style={stylesFor(colors).messageReferenceRole}>{contact === 'A djal support' ? 'Service client' : role === 'farmer' ? 'Acheteur' : 'Agriculteur'}</Text><Text style={stylesFor(colors).messageReferencePreview} numberOfLines={1}>{messages[contact]?.at(-1) ?? 'Démarrer une conversation'}</Text></View></Pressable>) : <EmptyState icon="search-outline" title="Aucune conversation trouvée" body="Essayez le nom d’un contact ou un mot du dernier message." />}</ScrollView><BottomNav items={role === 'farmer' ? farmerTabs : buyerTabs} active="messages" onPress={onNav} /></View>;
 }
 
-function ChatThread({ contact, messages, draft, onDraftChange, onSend, onBack, onReport }: { contact: string; messages: string[]; draft: string; onDraftChange: (value: string) => void; onSend: () => void; onBack: () => void; onReport?: () => void }) {
+type ChatMessage = { id: string; body: string; mine: boolean; createdAt?: string };
+
+/** Heure d'envoi lisible : « 14:05 » aujourd'hui, « Hier 14:05 », sinon « 12/09 14:05 ». */
+function formatMessageTime(createdAt?: string): string {
+  if (!createdAt) return '';
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfMessageDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfToday - startOfMessageDay) / 86400000);
+  if (dayDiff === 0) return time;
+  if (dayDiff === 1) return `Hier ${time}`;
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${time}`;
+}
+
+function ChatThread({ contact, avatarUrl, messages, draft, onDraftChange, onSend, onBack, onReport }: { contact: string; avatarUrl?: string; messages: Array<ChatMessage | string>; draft: string; onDraftChange: (value: string) => void; onSend: () => void; onBack: () => void; onReport?: () => void }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const inputRef = useRef<React.ComponentRef<typeof NativeTextInput>>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  // Le côté de la bulle dépend de l'expéditeur réel (mine = message envoyé par moi), plus de l'ordre d'affichage.
+  const chatMessages: ChatMessage[] = messages.map((message, index) =>
+    typeof message === 'string' ? { id: `local-${index}`, body: message, mine: true } : message,
+  );
   const send = () => {
     onSend();
     requestAnimationFrame(() => inputRef.current?.focus());
   };
-  return <KeyboardControllerAvoidingView style={stylesFor(colors).screen} behavior="padding" keyboardVerticalOffset={0}><View style={stylesFor(colors).chatHeader}><Pressable onPress={onBack} style={stylesFor(colors).chatBack}><Ionicons name="arrow-back" size={21} color={colors.foreground} /></Pressable><View style={stylesFor(colors).chatAvatar}><Text style={stylesFor(colors).largeAvatarText}>{contact.split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text><View style={stylesFor(colors).onlineDot} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{contact}</Text><Text style={stylesFor(colors).onlineText}>● en ligne</Text></View>{onReport && <Pressable accessibilityLabel="Signaler cet agriculteur" style={stylesFor(colors).chatCall} onPress={onReport}><Ionicons name="flag-outline" size={20} color={colors.destructive} /></Pressable>}</View><ScrollView contentContainerStyle={stylesFor(colors).chatContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled">{messages.map((message, index) => <View key={`${message}-${index}`} style={[stylesFor(colors).messageBubble, index % 2 === 1 && stylesFor(colors).messageBubbleMine]}><Text style={stylesFor(colors).messageText}>{message}</Text><Text style={stylesFor(colors).messageTime}>{index === 0 ? '7:10' : 'Maintenant'}</Text></View>)}</ScrollView><View style={[stylesFor(colors).composer, { paddingBottom: Math.max(insets.bottom, 10) }]}><Pressable style={stylesFor(colors).composerIcon} onPress={() => Alert.alert('Pièce jointe', 'Ajoutez une photo depuis votre appareil dans une prochaine mise à jour.')}><Ionicons name="attach-outline" size={22} color={colors.foreground} /></Pressable><View style={stylesFor(colors).composerField}><TextInput ref={inputRef} value={draft} onChangeText={onDraftChange} placeholder="Écrire un message..." placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).composerInput} multiline textAlignVertical="center" /><Pressable onPress={() => onDraftChange(`${draft}😊`)}><Ionicons name="happy-outline" size={20} color={colors.mutedForeground} /></Pressable></View><Pressable onPress={send} style={stylesFor(colors).sendButton} disabled={!draft.trim()}><Ionicons name="send" size={18} color={colors.primaryForeground} /></Pressable></View></KeyboardControllerAvoidingView>;
+  return <KeyboardControllerAvoidingView style={stylesFor(colors).screen} behavior="padding" keyboardVerticalOffset={0}><View style={stylesFor(colors).chatHeader}><Pressable onPress={onBack} style={stylesFor(colors).chatBack} hitSlop={16}><Ionicons name="arrow-back" size={21} color={colors.foreground} /></Pressable><View style={stylesFor(colors).chatAvatar}><AvatarFill name={contact} uri={avatarUrl} textStyle={stylesFor(colors).largeAvatarText} /><View style={stylesFor(colors).onlineDot} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{contact}</Text><Text style={stylesFor(colors).onlineText}>● en ligne</Text></View>{onReport && <Pressable accessibilityLabel="Signaler cet agriculteur" style={stylesFor(colors).chatCall} onPress={onReport}><Ionicons name="flag-outline" size={20} color={colors.destructive} /></Pressable>}</View><ScrollView ref={scrollRef} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })} contentContainerStyle={stylesFor(colors).chatContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled">{chatMessages.map((message) => <View key={message.id} style={[stylesFor(colors).messageBubble, message.mine && stylesFor(colors).messageBubbleMine]}><Text style={stylesFor(colors).messageText}>{message.body}</Text>{message.createdAt ? <Text style={stylesFor(colors).messageTime}>{formatMessageTime(message.createdAt)}</Text> : null}</View>)}</ScrollView><View style={[stylesFor(colors).composer, { paddingBottom: Math.max(insets.bottom, 10) }]}><Pressable style={stylesFor(colors).composerIcon} onPress={() => Alert.alert('Pièce jointe', 'Ajoutez une photo depuis votre appareil dans une prochaine mise à jour.')}><Ionicons name="attach-outline" size={22} color={colors.foreground} /></Pressable><View style={stylesFor(colors).composerField}><TextInput ref={inputRef} value={draft} onChangeText={onDraftChange} placeholder="Écrire un message..." placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).composerInput} multiline textAlignVertical="center" /><Pressable onPress={() => onDraftChange(`${draft}😊`)}><Ionicons name="happy-outline" size={20} color={colors.mutedForeground} /></Pressable></View><Pressable onPress={send} style={stylesFor(colors).sendButton} disabled={!draft.trim()}><Ionicons name="send" size={18} color={colors.primaryForeground} /></Pressable></View></KeyboardControllerAvoidingView>;
 }
 
 function SectionHeader({ title, action, onPress }: { title: string; action?: string; onPress?: () => void }) {
@@ -900,7 +1131,7 @@ function CategoriesScreen({ onProduct, onNav }: { onProduct: (product: Product) 
   const [category, setCategory] = useState('all');
   const [query, setQuery] = useState('');
   const filtered = products.filter((product) => (category === 'all' || product.category === category) && `${product.name} ${product.category} ${product.farmer} ${product.location}`.toLowerCase().includes(query.trim().toLowerCase()));
-  return <View style={stylesFor(colors).screen}><AppHeader title="Catégories" subtitle="Explorez tous nos produits agricoles" /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} showsVerticalScrollIndicator={false}><View style={stylesFor(colors).searchBar}><Ionicons name="search" size={20} color={colors.mutedForeground} /><TextInput value={query} onChangeText={setQuery} placeholder="Rechercher un produit ou une catégorie" placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).searchInput} /></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).categoryScroll}>{categoryOptions.map((item) => <Pressable key={item.id} style={stylesFor(colors).categoryItem} onPress={() => setCategory(item.id)}><Image source={{ uri: categoryImageFor(item.slug) }} style={[stylesFor(colors).categoryImage, category === item.id && stylesFor(colors).categoryImageActive]} /><Text style={[stylesFor(colors).categoryLabel, category === item.id && { color: colors.primary, fontFamily: 'Inter_700Bold' }]}>{item.label}</Text></Pressable>)}</ScrollView><SectionHeader title="Produits disponibles" action={`${filtered.length} produits`} /><FlatList data={filtered} keyExtractor={(item) => item.id} numColumns={2} columnWrapperStyle={stylesFor(colors).gridGap} scrollEnabled={false} renderItem={({ item }) => <ProductCard product={item} onPress={() => onProduct(item)} />} ListEmptyComponent={<EmptyState icon="leaf-outline" title="Aucun produit dans cette catégorie" body="Les agriculteurs ajoutent de nouvelles récoltes chaque jour." />} /><SectionHeader title="Recommandés" action={`${Math.min(filtered.length, 5)} produits`} /><View style={stylesFor(colors).recommendList}>{filtered.slice(0, 5).map((product) => <RecommendationCard key={`recommend-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</View></ScrollView><BottomNav items={buyerTabs} active="categories" onPress={(key) => onNav(key)} /></View>;
+  return <View style={stylesFor(colors).screen}><AppHeader title="Catégories" subtitle="Explorez tous nos produits agricoles" /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} showsVerticalScrollIndicator={false}><View style={stylesFor(colors).searchBar}><Ionicons name="search" size={20} color={colors.mutedForeground} /><TextInput value={query} onChangeText={setQuery} placeholder="Rechercher un produit ou une catégorie" placeholderTextColor={colors.mutedForeground} style={stylesFor(colors).searchInput} /></View><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).categoryScroll}>{categoryOptions.map((item) => <Pressable key={item.id} style={stylesFor(colors).categoryItem} onPress={() => setCategory(item.id)}><Image source={{ uri: categoryImageFor(item) }} style={[stylesFor(colors).categoryImage, category === item.id && stylesFor(colors).categoryImageActive]} /><Text style={[stylesFor(colors).categoryLabel, category === item.id && { color: colors.primary, fontFamily: 'Inter_700Bold' }]}>{item.label}</Text></Pressable>)}</ScrollView><SectionHeader title="Produits disponibles" action={`${filtered.length} produits`} /><FlatList data={filtered} keyExtractor={(item) => item.id} numColumns={2} columnWrapperStyle={stylesFor(colors).gridGap} scrollEnabled={false} renderItem={({ item }) => <ProductCard product={item} onPress={() => onProduct(item)} />} ListEmptyComponent={<EmptyState icon="leaf-outline" title="Aucun produit dans cette catégorie" body="Les agriculteurs ajoutent de nouvelles récoltes chaque jour." />} /><SectionHeader title="Recommandés" action={`${Math.min(filtered.length, 5)} produits`} /><View style={stylesFor(colors).recommendList}>{filtered.slice(0, 5).map((product) => <RecommendationCard key={`recommend-${product.id}`} product={product} onPress={() => onProduct(product)} />)}</View></ScrollView><BottomNav items={buyerTabs} active="categories" onPress={(key) => onNav(key)} /></View>;
 }
 
 function ProductDetail({ product, onBack, onProduct }: { product: Product; onBack: () => void; onProduct: (product: Product) => void }) {
@@ -914,7 +1145,7 @@ function ProductDetail({ product, onBack, onProduct }: { product: Product; onBac
     addToCart(product, quantity);
     Alert.alert('Ajouté au panier', `${quantity} ${product.unit} de ${product.name} ajouté(s).`);
   };
-  return <View style={stylesFor(colors).screen}><AppHeader title="Détail du produit" onBack={onBack} right={<Pressable onPress={() => Alert.alert('Favoris', 'Produit ajouté à vos favoris.')} style={stylesFor(colors).iconButton}><Ionicons name="heart-outline" size={23} color={colors.foreground} /></Pressable>} /><ScrollView contentContainerStyle={stylesFor(colors).detailContent} showsVerticalScrollIndicator={false}><Image source={{ uri: product.image }} style={stylesFor(colors).detailImage} /><View style={stylesFor(colors).detailTitleRow}><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h2}>{product.name}</Text><Text style={stylesFor(colors).productMeta}>{product.category} · {product.location}</Text></View><View style={stylesFor(colors).ratingPill}><Ionicons name="star" size={14} color={colors.gold} /><Text style={stylesFor(colors).rating}>{product.rating}</Text></View></View><Text accessibilityLabel="Prix actuel" style={stylesFor(colors).detailPrice}>{money(product.price)} <Text style={stylesFor(colors).detailUnit}>/{product.unit}</Text></Text>{product.originalPrice && <Text accessibilityLabel="Prix habituel" style={stylesFor(colors).productMeta}>Prix habituel : {money(product.originalPrice)} /{product.unit}</Text>}<View style={stylesFor(colors).stockRow}><View style={[stylesFor(colors).stockDot, { backgroundColor: product.stock > 5 ? colors.primary : product.stock > 0 ? colors.orange : colors.destructive }]} /><Text style={stylesFor(colors).stockText}>{product.stock > 5 ? `${product.stock} disponibles` : product.stock > 0 ? `Plus que ${product.stock} en stock` : 'Rupture de stock'}</Text></View><View style={stylesFor(colors).dividerLine} /><Text style={stylesFor(colors).subheading}>À propos de ce produit</Text><Text style={stylesFor(colors).body}>{product.description}</Text><View style={stylesFor(colors).farmerCard}><View style={stylesFor(colors).avatar}><Text style={stylesFor(colors).avatarText}>{product.farmer.split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).bodySmall}>Vendu par</Text><Text style={stylesFor(colors).cardTitle}>{product.farmer}</Text><Text style={stylesFor(colors).productMeta}>{product.location}, Cameroun</Text></View><Ionicons name="chevron-forward" size={19} color={colors.mutedForeground} /></View><View style={stylesFor(colors).quantityRow}><Text style={stylesFor(colors).subheading}>Quantité</Text><QuantitySelector value={quantity} max={Math.max(product.stock, 1)} onChange={setQuantity} /></View><Pressable style={[stylesFor(colors).primaryButton, (product.stock === 0 || role === 'guest') && { backgroundColor: colors.muted }]} onPress={add}><Ionicons name="cart-outline" size={20} color={product.stock === 0 || role === 'guest' ? colors.mutedForeground : colors.primaryForeground} /><Text style={[stylesFor(colors).primaryButtonText, (product.stock === 0 || role === 'guest') && { color: colors.mutedForeground }]}>{role === 'guest' ? 'Se connecter pour acheter' : product.stock === 0 ? 'Rupture de stock' : 'Ajouter au panier'}</Text></Pressable><SectionHeader title="Vous aimerez aussi" />{similar.map((item) => <RecommendationCard key={item.id} product={item} onPress={() => onProduct(item)} />)}</ScrollView></View>;
+  return <View style={stylesFor(colors).screen}><AppHeader title="Détail du produit" onBack={onBack} right={<Pressable onPress={() => Alert.alert('Favoris', 'Produit ajouté à vos favoris.')} style={stylesFor(colors).iconButton}><Ionicons name="heart-outline" size={23} color={colors.foreground} /></Pressable>} /><ScrollView contentContainerStyle={stylesFor(colors).detailContent} showsVerticalScrollIndicator={false}><Image source={{ uri: product.image }} style={stylesFor(colors).detailImage} /><View style={stylesFor(colors).detailTitleRow}><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h2}>{product.name}</Text><Text style={stylesFor(colors).productMeta}>{product.category} · {product.location}</Text></View><View style={stylesFor(colors).ratingPill}><Ionicons name="star" size={14} color={colors.gold} /><Text style={stylesFor(colors).rating}>{product.rating}</Text></View></View><Text accessibilityLabel="Prix actuel" style={stylesFor(colors).detailPrice}>{money(product.price)} <Text style={stylesFor(colors).detailUnit}>/{product.unit}</Text></Text>{product.originalPrice && <Text accessibilityLabel="Prix habituel" style={stylesFor(colors).productMeta}>Prix habituel : {money(product.originalPrice)} /{product.unit}</Text>}<View style={stylesFor(colors).stockRow}><View style={[stylesFor(colors).stockDot, { backgroundColor: product.stock > 5 ? colors.primary : product.stock > 0 ? colors.orange : colors.destructive }]} /><Text style={stylesFor(colors).stockText}>{product.stock > 5 ? `${product.stock} disponibles` : product.stock > 0 ? `Plus que ${product.stock} en stock` : 'Rupture de stock'}</Text></View><View style={stylesFor(colors).dividerLine} /><Text style={stylesFor(colors).subheading}>À propos de ce produit</Text><Text style={stylesFor(colors).body}>{product.description}</Text><View style={stylesFor(colors).farmerCard}><View style={stylesFor(colors).avatar}><AvatarFill name={product.farmer} uri={product.farmerAvatar} textStyle={stylesFor(colors).avatarText} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).bodySmall}>Vendu par</Text><Text style={stylesFor(colors).cardTitle}>{product.farmer}</Text><Text style={stylesFor(colors).productMeta}>{product.location}, Cameroun</Text></View><Ionicons name="chevron-forward" size={19} color={colors.mutedForeground} /></View><View style={stylesFor(colors).quantityRow}><Text style={stylesFor(colors).subheading}>Quantité</Text><QuantitySelector value={quantity} max={Math.max(product.stock, 1)} onChange={setQuantity} /></View><Pressable style={[stylesFor(colors).primaryButton, (product.stock === 0 || role === 'guest') && { backgroundColor: colors.muted }]} onPress={add}><Ionicons name="cart-outline" size={20} color={product.stock === 0 || role === 'guest' ? colors.mutedForeground : colors.primaryForeground} /><Text style={[stylesFor(colors).primaryButtonText, (product.stock === 0 || role === 'guest') && { color: colors.mutedForeground }]}>{role === 'guest' ? 'Se connecter pour acheter' : product.stock === 0 ? 'Rupture de stock' : 'Ajouter au panier'}</Text></Pressable><SectionHeader title="Vous aimerez aussi" />{similar.map((item) => <RecommendationCard key={item.id} product={item} onPress={() => onProduct(item)} />)}</ScrollView></View>;
 }
 
 function QuantitySelector({ value, max, onChange }: { value: number; max: number; onChange: (value: number) => void }) {
@@ -976,21 +1207,22 @@ function CartScreen({ onBack, onDone }: { onBack: () => void; onDone: (id: strin
   </View>;
 }
 
-function OrdersScreen({ onOrder, onNav }: { onOrder: (id: string) => void; onNav: (screen: Screen) => void }) {
+function OrdersScreen({ onOrder, onNav, onMessageOrder }: { onOrder: (id: string) => void; onNav: (screen: Screen) => void; onMessageOrder?: (orderId: string) => void }) {
   const colors = useColors();
   const toast = useToast();
   const { orders, cartCount, role, updateOrderStatus } = useApp();
   const [filter, setFilter] = useState('Toutes');
   const filtered = filter === 'Toutes' ? orders : orders.filter((order) => filter === 'En cours' ? ['En attente', 'Confirmée', 'Préparée'].includes(order.status) : order.status === filter);
   if (role === 'guest') return <ProtectedScreen title="Mes commandes" onBack={() => onNav('home')} onLogin={() => onNav('auth')} onCreate={() => onNav('role')} />;
-  return <View style={stylesFor(colors).screen}><AppHeader title="Mes commandes" subtitle="Suivez vos achats en temps réel" dark /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).chipRow}>{['Toutes', 'En cours', 'Terminée', 'Annulée'].map((item) => <Pressable key={item} style={[stylesFor(colors).chip, filter === item && stylesFor(colors).chipActive]} onPress={() => setFilter(item)}><Text style={[stylesFor(colors).chipText, filter === item && stylesFor(colors).chipTextActive]}>{item}</Text></Pressable>)}</ScrollView>{filtered.map((order) => <OrderCard key={order.id} order={order} onPress={() => onOrder(order.id)} onMessage={() => onNav('messages')} onCancel={() => Alert.alert('Annuler la commande', 'Voulez-vous vraiment annuler cette commande ?', [{ text: 'Non' }, { text: 'Oui, annuler', style: 'destructive', onPress: () => { void updateOrderStatus(order.id, 'Annulée').catch((error) => toast(error instanceof Error ? error.message : 'L’annulation a échoué. Réessayez.')); } }])} />)}{filtered.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande ici" body="Vos commandes apparaîtront dans cet espace." />}</ScrollView><BottomNav items={buyerTabs} active="orders" onPress={(key) => onNav(key)} cartCount={cartCount} /></View>;
+  return <View style={stylesFor(colors).screen}><AppHeader title="Mes commandes" subtitle="Suivez vos achats en temps réel" dark /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).chipRow}>{['Toutes', 'En cours', 'Terminée', 'Annulée'].map((item) => <Pressable key={item} style={[stylesFor(colors).chip, filter === item && stylesFor(colors).chipActive]} onPress={() => setFilter(item)}><Text style={[stylesFor(colors).chipText, filter === item && stylesFor(colors).chipTextActive]}>{item}</Text></Pressable>)}</ScrollView>{filtered.map((order) => <OrderCard key={order.id} order={order} onPress={() => onOrder(order.id)} onMessage={onMessageOrder ? () => onMessageOrder(order.id) : () => onNav('messages')} onCancel={() => Alert.alert('Annuler la commande', 'Voulez-vous vraiment annuler cette commande ?', [{ text: 'Non' }, { text: 'Oui, annuler', style: 'destructive', onPress: () => { void updateOrderStatus(order.id, 'Annulée').catch((error) => toast(error instanceof Error ? error.message : 'L’annulation a échoué. Réessayez.')); } }])} />)}{filtered.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande ici" body="Vos commandes apparaîtront dans cet espace." />}</ScrollView><BottomNav items={buyerTabs} active="orders" onPress={(key) => onNav(key)} cartCount={cartCount} /></View>;
 }
 
 function OrderCard({ order, onPress, onMessage, onCancel }: { order: import('@/src/app-context').Order; onPress: () => void; onMessage?: () => void; onCancel?: () => void }) {
   const colors = useColors();
   const item = order.items[0];
-  const statusColor = order.status === 'Terminée' ? colors.primary : order.status === 'Annulée' ? colors.destructive : colors.orange;
-  return <Pressable style={stylesFor(colors).orderCard} onPress={onPress}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).cardTitle}>{order.id}</Text><View style={[stylesFor(colors).statusPill, { backgroundColor: `${statusColor}20` }]}><Text style={[stylesFor(colors).statusText, { color: statusColor }]}>{order.status}</Text></View></View><Text style={stylesFor(colors).productMeta}>{order.date}</Text><View style={stylesFor(colors).orderProduct}><Image source={{ uri: item.product.image }} style={stylesFor(colors).orderImage} /><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{item.product.name}</Text><Text style={stylesFor(colors).productMeta}>{item.quantity} {item.product.unit}</Text></View><Text style={stylesFor(colors).miniPrice}>{money(order.total)}</Text></View><View style={stylesFor(colors).progressTrack}><View style={[stylesFor(colors).progressFill, { width: order.status === 'Terminée' ? '100%' : order.status === 'Annulée' ? '40%' : '70%', backgroundColor: statusColor }]} /></View><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).hintText}>{order.status === 'Terminée' ? 'Commande terminée' : order.status === 'Annulée' ? 'Commande annulée' : 'Commande en cours de préparation'}</Text><View style={stylesFor(colors).orderActions}>{onMessage && <Pressable style={stylesFor(colors).orderActionButton} onPress={(event) => { event.stopPropagation(); onMessage(); }}><Ionicons name="chatbubble-outline" size={16} color={colors.primary} /></Pressable>}{onCancel && order.status === 'En attente' && <Pressable style={[stylesFor(colors).orderActionButton, { backgroundColor: `${colors.destructive}12` }]} onPress={(event) => { event.stopPropagation(); onCancel(); }}><Text style={stylesFor(colors).cancelText}>Annuler</Text></Pressable>}<Ionicons name="chevron-forward" size={18} color={colors.primary} /></View></View></Pressable>;
+  const statusColor = order.status === 'Terminée' ? colors.primary : order.status === 'Annulée' ? colors.destructive : colors.blueStatus;
+  const progressWidth = order.status === 'Terminée' ? '100%' : order.status === 'Annulée' ? '40%' : order.status === 'Confirmée' ? '50%' : order.status === 'Préparée' ? '75%' : '25%';
+  return <Pressable style={stylesFor(colors).orderCard} onPress={onPress}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).cardTitle}>{formatOrderCode(order.id)}</Text><View style={[stylesFor(colors).statusPill, { backgroundColor: `${statusColor}20` }]}><Text style={[stylesFor(colors).statusText, { color: statusColor }]}>{order.status}</Text></View></View><Text style={stylesFor(colors).productMeta}>{order.date}</Text><View style={stylesFor(colors).orderProduct}><Image source={{ uri: item.product.image }} style={stylesFor(colors).orderImage} /><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{item.product.name}</Text><Text style={stylesFor(colors).productMeta}>{item.quantity} {item.product.unit}</Text></View><Text style={stylesFor(colors).miniPrice}>{money(order.total)}</Text></View><View style={stylesFor(colors).progressTrack}><View style={[stylesFor(colors).progressFill, { width: progressWidth, backgroundColor: statusColor }]} /></View><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).hintText}>{order.status === 'Terminée' ? 'Commande livrée' : order.status === 'Annulée' ? 'Commande annulée' : order.status === 'En attente' ? 'Nouvelle commande, en attente de confirmation' : order.status === 'Confirmée' ? 'Commande confirmée, en préparation' : 'Commande en cours de préparation'}</Text><View style={stylesFor(colors).orderActions}>{onMessage && <Pressable style={stylesFor(colors).orderActionButton} onPress={(event) => { event.stopPropagation(); onMessage(); }}><Ionicons name="chatbubble-outline" size={16} color={colors.primary} /></Pressable>}{onCancel && order.status === 'En attente' && <Pressable style={[stylesFor(colors).orderActionButton, { backgroundColor: `${colors.destructive}12` }]} onPress={(event) => { event.stopPropagation(); onCancel(); }}><Text style={stylesFor(colors).cancelText}>Annuler</Text></Pressable>}<Ionicons name="chevron-forward" size={18} color={colors.primary} /></View></View></Pressable>;
 }
 
 function OrderDetail({ orderId, onBack, onMessage, farmer = false }: { orderId: string; onBack: () => void; onMessage?: () => void; farmer?: boolean }) {
@@ -1004,7 +1236,7 @@ function OrderDetail({ orderId, onBack, onMessage, farmer = false }: { orderId: 
   const cancel = () => Alert.alert('Annuler la commande', 'Voulez-vous vraiment annuler cette commande ?', [{ text: 'Non' }, { text: 'Oui, annuler', style: 'destructive', onPress: () => transition('Annulée', 'L’annulation a échoué. Réessayez.') }]);
   const accept = () => transition('Confirmée', 'La confirmation a échoué. Réessayez.');
   const deliver = () => transition('Terminée', 'La livraison a échoué. Réessayez.');
-  return <View style={stylesFor(colors).screen}><AppHeader title={farmer ? `Commande ${order.id}` : 'Détail de la commande'} onBack={onBack} farmer={farmer} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><View style={stylesFor(colors).detailOrderHero}><View><Text style={stylesFor(colors).productMeta}>Statut de la commande</Text><Text style={[stylesFor(colors).h2, { color: order.status === 'Annulée' ? colors.destructive : colors.foreground }]}>{farmer && order.status === 'Terminée' ? 'Livrée' : order.status}</Text></View><StatusIcon status={order.status} /></View><OrderCard order={order} onPress={() => undefined} onMessage={onMessage} onCancel={!farmer ? cancel : undefined} /><View style={stylesFor(colors).customerCard}><View style={stylesFor(colors).avatar}><Text style={stylesFor(colors).avatarText}>{(farmer ? order.customer : order.items[0].product.farmer).split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).productMeta}>{farmer ? 'Client' : 'Agriculteur'}</Text><Text style={stylesFor(colors).cardTitle}>{farmer ? order.customer : order.items[0].product.farmer}</Text><Text style={stylesFor(colors).productMeta}>{order.location}</Text></View>{onMessage && <Pressable style={stylesFor(colors).messageOrderButton} onPress={onMessage}><Ionicons name="chatbubble-outline" size={21} color={colors.primary} /></Pressable>}</View><Text style={stylesFor(colors).subheading}>Détails de la commande</Text>{order.items.map((line) => <View key={line.product.id} style={stylesFor(colors).cartItem}><Image source={{ uri: line.product.image }} style={stylesFor(colors).cartImage} /><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{line.product.name}</Text><Text style={stylesFor(colors).productMeta}>{line.quantity} × {money(line.product.price)}</Text></View><Text style={stylesFor(colors).miniPrice}>{money(line.quantity * line.product.price)}</Text></View>)}<View style={stylesFor(colors).summaryCard}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).h3}>Total de la commande</Text><Text style={stylesFor(colors).totalText}>{money(order.total)}</Text></View></View>{farmer && order.status === 'En attente' && <Pressable style={stylesFor(colors).primaryButton} onPress={accept}><Ionicons name="checkmark-circle-outline" size={19} color={colors.primaryForeground} /><Text style={stylesFor(colors).primaryButtonText}>Accepter la commande</Text></Pressable>}{farmer && order.status === 'Confirmée' && <Pressable style={stylesFor(colors).primaryButton} onPress={deliver}><Ionicons name="cube-outline" size={19} color={colors.primaryForeground} /><Text style={stylesFor(colors).primaryButtonText}>Marquer comme livrée</Text></Pressable>}</ScrollView></View>;
+  return <View style={stylesFor(colors).screen}><AppHeader title={farmer ? `Commande ${formatOrderCode(order.id)}` : 'Détail de la commande'} onBack={onBack} farmer={farmer} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><View style={stylesFor(colors).detailOrderHero}><View><Text style={stylesFor(colors).productMeta}>Statut de la commande</Text><Text style={[stylesFor(colors).h2, { color: order.status === 'Annulée' ? colors.destructive : colors.foreground }]}>{order.status === 'Terminée' ? 'Livrée' : order.status}</Text></View><StatusIcon status={order.status} /></View><OrderCard order={order} onPress={() => undefined} onMessage={onMessage} onCancel={!farmer ? cancel : undefined} /><View style={stylesFor(colors).customerCard}><View style={stylesFor(colors).avatar}><AvatarFill name={farmer ? order.customer : order.items[0].product.farmer} uri={farmer ? order.buyerAvatar : (order.sellerAvatar ?? order.items[0].product.farmerAvatar)} textStyle={stylesFor(colors).avatarText} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).productMeta}>{farmer ? 'Client' : 'Agriculteur'}</Text><Text style={stylesFor(colors).cardTitle}>{farmer ? order.customer : order.items[0].product.farmer}</Text><Text style={stylesFor(colors).productMeta}>{order.location}</Text></View>{onMessage && <Pressable style={stylesFor(colors).messageOrderButton} onPress={onMessage}><Ionicons name="chatbubble-outline" size={21} color={colors.primary} /></Pressable>}</View><Text style={stylesFor(colors).subheading}>Détails de la commande</Text>{order.items.map((line) => <View key={line.product.id} style={stylesFor(colors).cartItem}><Image source={{ uri: line.product.image }} style={stylesFor(colors).cartImage} /><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{line.product.name}</Text><Text style={stylesFor(colors).productMeta}>{line.quantity} × {money(line.product.price)}</Text></View><Text style={stylesFor(colors).miniPrice}>{money(line.quantity * line.product.price)}</Text></View>)}<View style={stylesFor(colors).summaryCard}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).h3}>Total de la commande</Text><Text style={stylesFor(colors).totalText}>{money(order.total)}</Text></View></View>{farmer && order.status === 'En attente' && <Pressable style={stylesFor(colors).primaryButton} onPress={accept}><Ionicons name="checkmark-circle-outline" size={19} color={colors.primaryForeground} /><Text style={stylesFor(colors).primaryButtonText}>Accepter la commande</Text></Pressable>}{farmer && order.status === 'Confirmée' && <Pressable style={stylesFor(colors).primaryButton} onPress={deliver}><Ionicons name="cube-outline" size={19} color={colors.primaryForeground} /><Text style={stylesFor(colors).primaryButtonText}>Marquer comme livrée</Text></Pressable>}</ScrollView></View>;
 }
 
 function OrderDetailView({ orderId, onBack, onMessage, farmer = false }: { orderId: string; onBack: () => void; onMessage?: () => void; farmer?: boolean }) {
@@ -1017,20 +1249,20 @@ function OrderDetailView({ orderId, onBack, onMessage, farmer = false }: { order
   const contactName = farmer ? (order.buyerName ?? order.customer) : (order.sellerName ?? order.items[0]?.product.farmer ?? 'Agriculteur');
   const contactCity = farmer ? (order.buyerCity ?? order.location) : (order.sellerCity ?? order.location);
   const contactPhone = farmer ? order.buyerPhone : order.sellerPhone;
-  const statusColor = order.status === 'Terminée' ? colors.primary : order.status === 'Annulée' ? colors.destructive : colors.orange;
+  const statusColor = order.status === 'Terminée' ? colors.primary : order.status === 'Annulée' ? colors.destructive : colors.blueStatus;
   const transition = (status: import('@/src/app-context').Order['status'], failure: string) => {
     void updateOrderStatus(order.id, status).catch((error) => toast(error instanceof Error ? error.message : failure));
   };
   const cancel = () => Alert.alert('Refuser la commande', farmer ? 'Cette commande sera annulée et le stock sera remis en vente.' : 'Voulez-vous vraiment annuler cette commande ?', [{ text: 'Non' }, { text: farmer ? 'Refuser' : 'Oui, annuler', style: 'destructive', onPress: () => transition('Annulée', 'La commande n’a pas pu être annulée.') }]);
-  const headerTitle = farmer ? `Commande ${order.id}` : 'Détail de la commande';
+  const headerTitle = farmer ? `Commande ${formatOrderCode(order.id)}` : 'Détail de la commande';
   return <View style={stylesFor(colors).screen}>
     <AppHeader title={headerTitle} onBack={onBack} farmer={farmer} />
     <ScrollView contentContainerStyle={stylesFor(colors).orderDetailContent} showsVerticalScrollIndicator={false}>
       <View style={[stylesFor(colors).orderStatusBanner, { borderColor: `${statusColor}35`, backgroundColor: `${statusColor}12` }]}>
-        <View style={stylesFor(colors).flex}><Text style={stylesFor(colors).productMeta}>Statut de la commande</Text><Text style={[stylesFor(colors).orderStatusTitle, { color: statusColor }]}>{farmer && order.status === 'Terminée' ? 'Livrée' : order.status}</Text><Text style={stylesFor(colors).productMeta}>{order.date} · {order.id}</Text></View><StatusIcon status={order.status} />
+        <View style={stylesFor(colors).flex}><Text style={stylesFor(colors).productMeta}>Statut de la commande</Text><Text style={[stylesFor(colors).orderStatusTitle, { color: statusColor }]}>{order.status === 'Terminée' ? 'Livrée' : order.status}</Text><Text style={stylesFor(colors).productMeta}>{order.date} · {formatOrderCode(order.id)}</Text></View><StatusIcon status={order.status} />
       </View>
       <View style={stylesFor(colors).orderContactCard}>
-        <View style={stylesFor(colors).largeAvatar}><Text style={stylesFor(colors).largeAvatarText}>{contactName.split(' ').map((word) => word[0]).join('').slice(0, 2)}</Text></View>
+        <View style={stylesFor(colors).largeAvatar}><AvatarFill name={contactName} uri={farmer ? order.buyerAvatar : (order.sellerAvatar ?? order.items[0]?.product.farmerAvatar)} textStyle={stylesFor(colors).largeAvatarText} /></View>
         <View style={stylesFor(colors).flex}><Text style={stylesFor(colors).productMeta}>{farmer ? 'Client' : 'Agriculteur'}</Text><Text style={stylesFor(colors).h3}>{contactName}</Text><Text style={stylesFor(colors).productMeta}>{contactCity}</Text>{contactPhone ? <Text style={stylesFor(colors).productMeta}>{contactPhone}</Text> : null}</View>
         {onMessage && <Pressable accessibilityLabel={`Écrire à ${contactName}`} style={stylesFor(colors).messageOrderButton} onPress={onMessage}><Ionicons name="chatbubble-ellipses-outline" size={21} color={colors.primary} /></Pressable>}
       </View>
@@ -1048,7 +1280,7 @@ function OrderDetailView({ orderId, onBack, onMessage, farmer = false }: { order
 function StatusIcon({ status }: { status: string }) {
   const colors = useColors();
   const iconName = status === 'Terminée' ? 'checkmark-circle' : status === 'Annulée' ? 'close-circle' : 'time';
-  const color = status === 'Terminée' ? colors.primary : status === 'Annulée' ? colors.destructive : colors.orange;
+  const color = status === 'Terminée' ? colors.primary : status === 'Annulée' ? colors.destructive : colors.blueStatus;
   return <Ionicons name={iconName} size={32} color={color} />;
 }
 
@@ -1066,7 +1298,7 @@ function BuyerProfile({ onNav, onSignOut }: { onNav: (screen: Screen) => void; o
   useEffect(() => {
     if (!editing) updateProfile({ name, email, phone, location, address });
   }, [editing]);
-   return <View style={stylesFor(colors).screen}><AppHeader title="Mon profil" subtitle="Votre espace personnel" /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><View style={stylesFor(colors).profileCard}><View style={stylesFor(colors).largeAvatar}><Text style={stylesFor(colors).largeAvatarText}>{name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{name}</Text><Text style={stylesFor(colors).productMeta}>Acheteur · {location}</Text><View style={stylesFor(colors).ratingRow}><Ionicons name="bag-handle-outline" size={13} color={colors.primary} /><Text style={stylesFor(colors).rating}>{orders.length} commande(s)</Text></View></View><Pressable onPress={() => setEditing(!editing)} style={stylesFor(colors).profileEditButton}><Ionicons name="create-outline" size={17} color={colors.primary} /><Text style={stylesFor(colors).profileEditLabel}>{editing ? 'Fermer' : 'Modifier'}</Text></Pressable></View>{editing && <View style={stylesFor(colors).editCard}><Field label="Nom complet" placeholder="Votre nom" value={name} onChangeText={setName} icon="person-outline" /><Field label="Adresse email" placeholder="vous@exemple.com" value={email} onChangeText={setEmail} keyboardType="email-address" icon="mail-outline" /><Field label="Téléphone" placeholder="+237..." value={phone} onChangeText={setPhone} keyboardType="phone-pad" icon="call-outline" /><Field label="Localisation" placeholder="Yaoundé, Cameroun" value={location} onChangeText={setLocation} icon="location-outline" /><Field label="Adresse de livraison" placeholder="Votre adresse complète" value={address} onChangeText={setAddress} icon="home-outline" /><Pressable style={stylesFor(colors).smallButton} onPress={() => setEditing(false)}><Text style={stylesFor(colors).smallButtonText}>Enregistrer les informations</Text></Pressable></View>}<View style={stylesFor(colors).profileStats}><Stat label="Commandes" value={String(orders.length)} icon="bag-handle-outline" color={colors.softGreen} /><Stat label="Dépenses" value={money(orders.reduce((sum, order) => sum + order.total, 0))} icon="cash-outline" color={colors.softGold} /><Stat label="Articles" value={String(orders.reduce((sum, order) => sum + order.items.reduce((items, line) => items + line.quantity, 0), 0))} icon="leaf-outline" color={colors.softBlue} /></View><ProfileMenuItem icon="location-outline" title="Adresse de livraison" subtitle={address} /><ProfileMenuItem icon="card-outline" title="Moyen de paiement" subtitle={paymentMethods.find((method) => method.id === selectedPaymentMethodId)?.label ?? 'Non configuré'} onPress={choosePaymentMethod} /><ProfileMenuItem icon="notifications-outline" title="Notifications" subtitle={profile.notificationsEnabled ? 'Activées' : 'Désactivées'} toggle value={profile.notificationsEnabled} onToggle={() => updateProfile({ notificationsEnabled: !profile.notificationsEnabled })} /><ProfileMenuItem icon="moon-outline" title="Apparence" subtitle={themeMode === 'dark' ? 'Mode nuit' : 'Mode jour'} toggle value={themeMode === 'dark'} onToggle={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')} /><ProfileMenuItem icon="globe-outline" title="Langue" subtitle={language === 'fr' ? 'Français' : 'English'} onPress={chooseLanguage} /><ProfileMenuItem icon="help-circle-outline" title="Aide" subtitle="FAQ, contact" /><Pressable style={stylesFor(colors).logoutButton} onPress={onSignOut}><Ionicons name="log-out-outline" size={19} color={colors.destructive} /><Text style={stylesFor(colors).dangerLink}>Se déconnecter</Text></Pressable></ScrollView><BottomNav items={buyerTabs} active="profile" onPress={(key) => onNav(key)} cartCount={cartCount} /></View>;
+   return <View style={stylesFor(colors).screen}><AppHeader title="Mon profil" subtitle="Votre espace personnel" /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><View style={stylesFor(colors).profileCard}><View style={stylesFor(colors).largeAvatar}><AvatarFill name={name} uri={profile.avatarUri} textStyle={stylesFor(colors).largeAvatarText} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{name}</Text><Text style={stylesFor(colors).productMeta}>Acheteur · {location}</Text><View style={stylesFor(colors).ratingRow}><Ionicons name="bag-handle-outline" size={13} color={colors.primary} /><Text style={stylesFor(colors).rating}>{orders.length} commande(s)</Text></View></View><Pressable onPress={() => setEditing(!editing)} style={stylesFor(colors).profileEditButton}><Ionicons name="create-outline" size={17} color={colors.primary} /><Text style={stylesFor(colors).profileEditLabel}>{editing ? 'Fermer' : 'Modifier'}</Text></Pressable></View>{editing && <View style={stylesFor(colors).editCard}><Field label="Nom complet" placeholder="Votre nom" value={name} onChangeText={setName} icon="person-outline" /><Field label="Adresse email" placeholder="vous@exemple.com" value={email} onChangeText={setEmail} keyboardType="email-address" icon="mail-outline" /><Field label="Téléphone" placeholder="+237..." value={phone} onChangeText={setPhone} keyboardType="phone-pad" icon="call-outline" /><Field label="Localisation" placeholder="Yaoundé, Cameroun" value={location} onChangeText={setLocation} icon="location-outline" /><Field label="Adresse de livraison" placeholder="Votre adresse complète" value={address} onChangeText={setAddress} icon="home-outline" /><Pressable style={stylesFor(colors).smallButton} onPress={() => setEditing(false)}><Text style={stylesFor(colors).smallButtonText}>Enregistrer les informations</Text></Pressable></View>}<View style={stylesFor(colors).profileStats}><Stat label="Commandes" value={String(orders.length)} icon="bag-handle-outline" color={colors.softGreen} /><Stat label="Dépenses" value={money(orders.reduce((sum, order) => sum + order.total, 0))} icon="cash-outline" color={colors.softGold} /><Stat label="Articles" value={String(orders.reduce((sum, order) => sum + order.items.reduce((items, line) => items + line.quantity, 0), 0))} icon="leaf-outline" color={colors.softBlue} /></View><ProfileMenuItem icon="location-outline" title="Adresse de livraison" subtitle={address} /><ProfileMenuItem icon="card-outline" title="Moyen de paiement" subtitle={paymentMethods.find((method) => method.id === selectedPaymentMethodId)?.label ?? 'Non configuré'} onPress={choosePaymentMethod} /><ProfileMenuItem icon="notifications-outline" title="Notifications" subtitle={profile.notificationsEnabled ? 'Activées' : 'Désactivées'} toggle value={profile.notificationsEnabled} onToggle={() => updateProfile({ notificationsEnabled: !profile.notificationsEnabled })} /><ProfileMenuItem icon="moon-outline" title="Apparence" subtitle={themeMode === 'dark' ? 'Mode nuit' : 'Mode jour'} toggle value={themeMode === 'dark'} onToggle={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')} /><ProfileMenuItem icon="globe-outline" title="Langue" subtitle={language === 'fr' ? 'Français' : 'English'} onPress={chooseLanguage} /><ProfileMenuItem icon="help-circle-outline" title="Aide" subtitle="FAQ, contact" /><Pressable style={stylesFor(colors).logoutButton} onPress={onSignOut}><Ionicons name="log-out-outline" size={19} color={colors.destructive} /><Text style={stylesFor(colors).dangerLink}>Se déconnecter</Text></Pressable></ScrollView><BottomNav items={buyerTabs} active="profile" onPress={(key) => onNav(key)} cartCount={cartCount} /></View>;
 }
 
 function ProfileMenuItem({ icon, title, subtitle, toggle, value = false, onToggle, onPress }: { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string; toggle?: boolean; value?: boolean; onToggle?: () => void; onPress?: () => void }) {
@@ -1101,14 +1333,21 @@ function BottomNav({ items, active, onPress, cartCount, guest }: { items: NavIte
 
 function FarmerDashboard({ onNav }: { onNav: (screen: Screen) => void }) {
   const colors = useColors();
-  const { farmerListings, orders, profile } = useApp();
+  const { farmerListings, orders, profile, notifications, notificationsEnabled, refreshNotifications } = useApp();
   const activeProducts = farmerListings.filter((product) => product.stock > 0 && product.status !== 'removed').length;
   const pending = orders.filter((order) => order.status === 'En attente').length;
   const delivered = orders.filter((order) => order.status === 'Terminée').length;
   const revenue = orders.reduce((sum, order) => sum + (order.status === 'Annulée' ? 0 : order.total), 0);
   const lowStock = farmerListings.filter((product) => product.status !== 'removed' && product.stock > 0 && product.stock <= 5);
   const recentOrders = orders.slice(0, 3);
-  return <View style={stylesFor(colors).screen}><AppHeader farmer title={`Bonjour, ${profile.name.split(' ')[0]} 👋`} location={profile.location} right={<View style={stylesFor(colors).headerActions}><Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('farmer-orders')}><Ionicons name="notifications-outline" size={19} color={colors.primary} /></Pressable><Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('farmer-profile')}><Ionicons name="person-outline" size={19} color={colors.primary} /></Pressable></View>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} showsVerticalScrollIndicator={false}><SectionHeader title="Résumé du jour" /><View style={stylesFor(colors).statsGrid}><Stat label="Produits actifs" value={String(activeProducts)} icon="cube-outline" color={colors.softGreen} /><Stat label="Commandes en attente" value={String(pending)} icon="time-outline" color={colors.softGold} /><Stat label="Revenu en FCFA" value={String(revenue)} icon="trending-up-outline" color={colors.softBlue} /><Stat label="Commandes livrées" value={String(delivered)} icon="checkmark-circle-outline" color={colors.softGreen} /></View><SectionHeader title="Actions rapides" /><View style={stylesFor(colors).quickRow}><QuickAction icon="add" label="Ajouter un produit" onPress={() => onNav('product-form')} color={colors.primary} /><QuickAction icon="bag-handle-outline" label="Commandes" onPress={() => onNav('farmer-orders')} color={colors.orange} /><QuickAction icon="stats-chart-outline" label="Statistiques" onPress={() => onNav('sales')} color={colors.blue} /><QuickAction icon="trending-up-outline" label="Tendances du marché" onPress={() => onNav('sales')} color={colors.purple} /></View><SectionHeader title="Commandes récentes" action="Voir tout" onPress={() => onNav('farmer-orders')} /><View style={stylesFor(colors).recentOrders}>{recentOrders.map((order) => { const item = order.items[0]; const customer = order.buyerName ?? order.customer; const initials = customer.split(' ').map((word) => word[0]).join('').slice(0, 2); return <Pressable key={order.id} style={stylesFor(colors).recentOrder} onPress={() => onNav('farmer-orders')}><View style={stylesFor(colors).largeAvatar}><Text style={stylesFor(colors).largeAvatarText}>{initials}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{customer}</Text><Text style={stylesFor(colors).productMeta}>{order.buyerCity ?? order.location}</Text><Text style={stylesFor(colors).hintText}>{item?.product.name} · {item?.quantity} {item?.product.unit}</Text></View><View style={stylesFor(colors).alignEnd}><Text style={stylesFor(colors).miniPrice}>{money(order.total)}</Text><FarmerOrderStatus status={order.status} /></View></Pressable>; })}{recentOrders.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande reçue" body="Les nouvelles commandes de vos clients apparaîtront ici." />}</View><SectionHeader title="À surveiller" /><View style={stylesFor(colors).notificationCard}><View style={[stylesFor(colors).notificationIcon, { backgroundColor: pending ? colors.softGold : colors.softGreen }]}><Ionicons name={pending ? "time-outline" : "checkmark-circle-outline"} size={18} color={pending ? colors.orange : colors.primary} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{pending ? `${pending} commande(s) à traiter` : 'Aucune commande en attente'}</Text><Text style={stylesFor(colors).productMeta}>{pending ? 'Ouvrez vos commandes pour confirmer ou refuser chaque demande.' : 'Votre activité est à jour.'}</Text></View></View>{lowStock.length > 0 && <View style={stylesFor(colors).notificationCard}><View style={[stylesFor(colors).notificationIcon, { backgroundColor: colors.softGold }]}><Ionicons name="warning-outline" size={18} color={colors.orange} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>Stock à renouveler</Text><Text style={stylesFor(colors).productMeta}>{lowStock.map((product) => `${product.name} (${product.stock})`).join(' · ')}</Text></View></View>}<View style={stylesFor(colors).performanceCard}><View style={stylesFor(colors).rowBetween}><View><Text style={stylesFor(colors).performanceKicker}>Performance de la ferme</Text><Text style={stylesFor(colors).performanceTitle}>{orders.length ? `${delivered}/${orders.length} commandes livrées` : 'Pas encore de commande'}</Text></View><Pressable style={stylesFor(colors).statsPill} onPress={() => onNav('sales')}><Ionicons name="stats-chart-outline" size={14} color={colors.primary} /><Text style={stylesFor(colors).statsPillText}>Stats</Text></Pressable></View><View style={stylesFor(colors).performanceRow}><PerformanceStat value={orders.length ? `${Math.round((delivered / orders.length) * 100)}%` : '—'} label="Livraison" /><PerformanceStat value={String(farmerListings.length)} label="Publications" /><PerformanceStat value={String(revenue)} label="FCFA générés" /></View></View></ScrollView><BottomNav items={farmerTabs} active="dashboard" onPress={onNav} /></View>;
+  const unreadNotifications = notifications.filter((item) => !item.readAt).length;
+  useEffect(() => {
+    if (!notificationsEnabled) return;
+    void refreshNotifications();
+    const timer = setInterval(() => void refreshNotifications(), 15000);
+    return () => clearInterval(timer);
+  }, [notificationsEnabled, refreshNotifications]);
+  return <View style={stylesFor(colors).screen}><AppHeader farmer title={`Bonjour, ${profile.name.split(' ')[0]} 👋`} location={profile.location} right={<View style={stylesFor(colors).headerActions}><Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('notifications')}><Ionicons name="notifications-outline" size={19} color={colors.primary} /><View style={stylesFor(colors).unreadBadge}><Text style={stylesFor(colors).unreadText}>{unreadNotifications}</Text></View></Pressable><Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('farmer-profile')}><Ionicons name="person-outline" size={19} color={colors.primary} /></Pressable></View>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} showsVerticalScrollIndicator={false}><SectionHeader title="Résumé du jour" /><View style={stylesFor(colors).statsGrid}><Stat label="Produits actifs" value={String(activeProducts)} icon="cube-outline" color={colors.softGreen} /><Stat label="Commandes en attente" value={String(pending)} icon="time-outline" color={colors.softGold} /><Stat label="Revenu en FCFA" value={String(revenue)} icon="trending-up-outline" color={colors.softBlue} /><Stat label="Commandes livrées" value={String(delivered)} icon="checkmark-circle-outline" color={colors.softGreen} /></View><SectionHeader title="Actions rapides" /><View style={stylesFor(colors).quickRow}><QuickAction icon="add" label="Ajouter un produit" onPress={() => onNav('product-form')} color={colors.primary} /><QuickAction icon="bag-handle-outline" label="Commandes" onPress={() => onNav('farmer-orders')} color={colors.orange} /><QuickAction icon="stats-chart-outline" label="Statistiques" onPress={() => onNav('sales')} color={colors.blue} /><QuickAction icon="trending-up-outline" label="Tendances du marché" onPress={() => onNav('sales')} color={colors.purple} /></View><SectionHeader title="Commandes récentes" action="Voir tout" onPress={() => onNav('farmer-orders')} /><View style={stylesFor(colors).recentOrders}>{recentOrders.map((order) => { const item = order.items[0]; const customer = order.buyerName ?? order.customer; const initials = customer.split(' ').map((word) => word[0]).join('').slice(0, 2); return <Pressable key={order.id} style={stylesFor(colors).recentOrder} onPress={() => onNav('farmer-orders')}><View style={stylesFor(colors).largeAvatar}><Text style={stylesFor(colors).largeAvatarText}>{initials}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{customer}</Text><Text style={stylesFor(colors).productMeta}>{order.buyerCity ?? order.location}</Text><Text style={stylesFor(colors).hintText}>{item?.product.name} · {item?.quantity} {item?.product.unit}</Text></View><View style={stylesFor(colors).alignEnd}><Text style={stylesFor(colors).miniPrice}>{money(order.total)}</Text><FarmerOrderStatus status={order.status} /></View></Pressable>; })}{recentOrders.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande reçue" body="Les nouvelles commandes de vos clients apparaîtront ici." />}</View><SectionHeader title="À surveiller" /><View style={stylesFor(colors).notificationCard}><View style={[stylesFor(colors).notificationIcon, { backgroundColor: pending ? colors.softGold : colors.softGreen }]}><Ionicons name={pending ? "time-outline" : "checkmark-circle-outline"} size={18} color={pending ? colors.orange : colors.primary} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{pending ? `${pending} commande(s) à traiter` : 'Aucune commande en attente'}</Text><Text style={stylesFor(colors).productMeta}>{pending ? 'Ouvrez vos commandes pour confirmer ou refuser chaque demande.' : 'Votre activité est à jour.'}</Text></View></View>{lowStock.length > 0 && <View style={stylesFor(colors).notificationCard}><View style={[stylesFor(colors).notificationIcon, { backgroundColor: colors.softGold }]}><Ionicons name="warning-outline" size={18} color={colors.orange} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>Stock à renouveler</Text><Text style={stylesFor(colors).productMeta}>{lowStock.map((product) => `${product.name} (${product.stock})`).join(' · ')}</Text></View></View>}<View style={stylesFor(colors).performanceCard}><View style={stylesFor(colors).rowBetween}><View><Text style={stylesFor(colors).performanceKicker}>Performance de la ferme</Text><Text style={stylesFor(colors).performanceTitle}>{orders.length ? `${delivered}/${orders.length} commandes livrées` : 'Pas encore de commande'}</Text></View><Pressable style={stylesFor(colors).statsPill} onPress={() => onNav('sales')}><Ionicons name="stats-chart-outline" size={14} color={colors.primary} /><Text style={stylesFor(colors).statsPillText}>Stats</Text></Pressable></View><View style={stylesFor(colors).performanceRow}><PerformanceStat value={orders.length ? `${Math.round((delivered / orders.length) * 100)}%` : '—'} label="Livraison" /><PerformanceStat value={String(farmerListings.length)} label="Publications" /><PerformanceStat value={String(revenue)} label="FCFA générés" /></View></View></ScrollView><BottomNav items={farmerTabs} active="dashboard" onPress={onNav} /></View>;
 }
 
 function PerformanceStat({ value, label }: { value: string; label: string }) {
@@ -1147,7 +1386,7 @@ function StockIndicator({ stock }: { stock: number }) {
 
 function FarmerOrderStatus({ status }: { status: import('@/src/app-context').Order['status'] }) {
   const colors = useColors();
-  const color = status === 'Terminée' ? colors.primary : status === 'Annulée' ? colors.destructive : status === 'Confirmée' ? colors.greenLight : colors.orange;
+  const color = status === 'Terminée' ? colors.primary : status === 'Annulée' ? colors.destructive : status === 'Confirmée' ? colors.greenLight : colors.blueStatus;
   const label = status === 'Terminée' ? 'Livrée' : status;
   return <View style={[stylesFor(colors).statusPill, { backgroundColor: `${color}20` }]}><Text style={[stylesFor(colors).statusText, { color }]}>{label}</Text></View>;
 }
@@ -1170,19 +1409,74 @@ function FarmerProductForm({ product, onBack, onSaved }: { product: Product | nu
   };
   const productIcons = ['🍍', '🍠', '🦐', '🥬', '🍊', '🌾', '🥔'];
   // @ts-expect-error React Native Alert option inference is narrower than the cancel action used by these legacy inline pickers.
-  return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={stylesFor(colors).productFormContent} keyboardShouldPersistTaps="handled"><View style={stylesFor(colors).productFormHeader}><Pressable onPress={onBack} style={stylesFor(colors).productBack}><Ionicons name="arrow-back" size={25} color={colors.foreground} /></Pressable><Text style={stylesFor(colors).productFormTitle}>{product ? 'Modifier un produit' : 'Ajouter un produit'}</Text></View><Text style={stylesFor(colors).productFormLabel}>Icône du produit</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).productIconRow}>{[...productIcons, ...productIcons].map((icon, index) => <Pressable key={`${icon}-${index}`} onPress={() => setProductIcon(icon)} style={[stylesFor(colors).productIconChoice, productIcon === icon && stylesFor(colors).productIconSelected]}><Text style={stylesFor(colors).productIconText}>{icon}</Text></Pressable>)}</ScrollView><Text style={stylesFor(colors).productFormLabel}>Photo du produit</Text><Pressable style={stylesFor(colors).productImagePicker} onPress={() => Alert.alert('Photo du produit', 'La sélection d’image sera disponible dans la prochaine version.') }><Ionicons name="camera-outline" size={34} color={colors.primary} /><Text style={stylesFor(colors).productImageText}>Appuyez pour ajouter une image</Text></Pressable><Text style={stylesFor(colors).productFormLabel}>Nom du produit</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="Ex: Tomates fraîches" placeholderTextColor={colors.mutedForeground} value={name} onChangeText={setName} /><Text style={stylesFor(colors).productFormLabel}>Catégorie</Text><Pressable style={stylesFor(colors).productFormInputRow} onPress={() => Alert.alert('Catégorie', 'Choisissez une catégorie', categories.slice(1).map((item) => ({ text: item.label, onPress: () => setCategory(item.id) })).concat([{ text: 'Annuler', style: 'cancel' as const }]))}><Text style={stylesFor(colors).productFormPlaceholder}>{categories.find((item) => item.id === category)?.label ?? 'Légumes'}</Text><Ionicons name="chevron-down" size={21} color={colors.mutedForeground} /></Pressable><View style={stylesFor(colors).productFormTwoColumns}><View style={stylesFor(colors).productFormColumn}><Text style={stylesFor(colors).productFormLabel}>Quantité</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="0" placeholderTextColor={colors.mutedForeground} value={stock} onChangeText={setStock} keyboardType="number-pad" /></View><View style={stylesFor(colors).productFormColumn}><Text style={stylesFor(colors).productFormLabel}>Unité</Text><Pressable style={stylesFor(colors).productFormInputRow} onPress={() => Alert.alert('Unité', 'Choisissez une unité', ['Kg', 'Sac', 'Filet', 'Régime'].map((item) => ({ text: item, onPress: () => setUnit(item.toLowerCase()) })).concat([{ text: 'Annuler', style: 'cancel' as const }]))}><Text style={stylesFor(colors).productFormPlaceholder}>{unit || 'Kg'}</Text><Ionicons name="chevron-down" size={21} color={colors.mutedForeground} /></Pressable></View></View><Text style={stylesFor(colors).productFormLabel}>Localisation</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="Ex: Okola" placeholderTextColor={colors.mutedForeground} defaultValue="Yaoundé" /><Text style={stylesFor(colors).productFormLabel}>Description</Text><TextInput style={[stylesFor(colors).productFormInput, stylesFor(colors).productFormMultiline]} placeholder="Décrivez votre produit..." placeholderTextColor={colors.mutedForeground} value={description} onChangeText={setDescription} multiline /><Text style={stylesFor(colors).productFormLabel}>Prix</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="Ex: 5000 fcfa" placeholderTextColor={colors.mutedForeground} value={price} onChangeText={setPrice} keyboardType="number-pad" /><Pressable style={stylesFor(colors).productSaveButton} onPress={submit}><Ionicons name="checkmark-circle-outline" size={21} color={colors.primaryForeground} /><Text style={stylesFor(colors).productSaveText}>Enregistrer le produit</Text></Pressable></ScrollView></KeyboardAvoidingView>;
+  return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={stylesFor(colors).productFormContent} keyboardShouldPersistTaps="handled"><View style={stylesFor(colors).productFormHeader}><Pressable onPress={onBack} style={stylesFor(colors).productBack}><Ionicons name="arrow-back" size={25} color={colors.foreground} /></Pressable><Text style={stylesFor(colors).productFormTitle}>{product ? 'Modifier un produit' : 'Ajouter un produit'}</Text></View><Text style={stylesFor(colors).productFormLabel}>Icône du produit</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).productIconRow}>{[...productIcons, ...productIcons].map((icon, index) => <Pressable key={`${icon}-${index}`} onPress={() => setProductIcon(icon)} style={[stylesFor(colors).productIconChoice, productIcon === icon && stylesFor(colors).productIconSelected]}><Text style={stylesFor(colors).productIconText}>{icon}</Text></Pressable>)}</ScrollView><Text style={stylesFor(colors).productFormLabel}>Photo du produit</Text><Pressable style={stylesFor(colors).productImagePicker} onPress={() => Alert.alert('Photo du produit', 'La sélection d’image sera disponible dans la prochaine version.') }><Ionicons name="camera-outline" size={34} color={colors.primary} /><Text style={stylesFor(colors).productImageText}>Appuyez pour ajouter une image</Text></Pressable><Text style={stylesFor(colors).productFormLabel}>Nom du produit</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="Ex: Tomates fraîches" placeholderTextColor={colors.mutedForeground} value={name} onChangeText={setName} /><Text style={stylesFor(colors).productFormLabel}>Catégorie</Text><Pressable style={stylesFor(colors).productFormInputRow} onPress={() => Alert.alert('Catégorie', 'Choisissez une catégorie', categories.slice(1).map((item) => ({ text: item.label, onPress: () => setCategory(item.id) })).concat([{ text: 'Annuler', style: 'cancel' as const }]))}><Text style={stylesFor(colors).productFormPlaceholder}>{categories.find((item) => item.id === category)?.label ?? 'Légumes'}</Text><Ionicons name="chevron-down" size={21} color={colors.mutedForeground} /></Pressable><View style={stylesFor(colors).productFormTwoColumns}><View style={stylesFor(colors).productFormColumn}><Text style={stylesFor(colors).productFormLabel}>Quantité</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="0" placeholderTextColor={colors.mutedForeground} value={stock} onChangeText={setStock} keyboardType="number-pad" /></View><View style={stylesFor(colors).productFormColumn}><Text style={stylesFor(colors).productFormLabel}>Unité</Text><Pressable style={stylesFor(colors).productFormInputRow} onPress={() => Alert.alert('Unité', 'Choisissez une unité', ['Kg', 'Unité', 'Sac', 'Caisse', 'Filet', 'Régime', 'Tas', 'Litre'].map((item) => ({ text: item, onPress: () => setUnit(item.toLowerCase()) })).concat([{ text: 'Annuler', style: 'cancel' as const }]))}><Text style={stylesFor(colors).productFormPlaceholder}>{unit || 'Kg'}</Text><Ionicons name="chevron-down" size={21} color={colors.mutedForeground} /></Pressable></View></View><Text style={stylesFor(colors).productFormLabel}>Localisation</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="Ex: Okola" placeholderTextColor={colors.mutedForeground} defaultValue="Yaoundé" /><Text style={stylesFor(colors).productFormLabel}>Description</Text><TextInput style={[stylesFor(colors).productFormInput, stylesFor(colors).productFormMultiline]} placeholder="Décrivez votre produit..." placeholderTextColor={colors.mutedForeground} value={description} onChangeText={setDescription} multiline /><Text style={stylesFor(colors).productFormLabel}>Prix</Text><TextInput style={stylesFor(colors).productFormInput} placeholder="Ex: 5000 fcfa" placeholderTextColor={colors.mutedForeground} value={price} onChangeText={setPrice} keyboardType="number-pad" /><Pressable style={stylesFor(colors).productSaveButton} onPress={submit}><Ionicons name="checkmark-circle-outline" size={21} color={colors.primaryForeground} /><Text style={stylesFor(colors).productSaveText}>Enregistrer le produit</Text></Pressable></ScrollView></KeyboardAvoidingView>;
   return <KeyboardAvoidingView style={stylesFor(colors).screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><ScrollView contentContainerStyle={stylesFor(colors).formContent} keyboardShouldPersistTaps="handled"><AppHeader title={product ? 'Modifier le produit' : 'Ajouter un produit'} onBack={onBack} /><Field label="Nom du produit" placeholder="Ex : Avocats frais" value={name} onChangeText={setName} icon="leaf-outline" /><Field label="Description" placeholder="Décrivez votre récolte" value={description} onChangeText={setDescription} icon="document-text-outline" /><View style={stylesFor(colors).formRow}><View style={stylesFor(colors).half}><Field label="Prix (FCFA)" placeholder="4000" value={price} onChangeText={setPrice} icon="cash-outline" keyboardType="phone-pad" /></View><View style={stylesFor(colors).half}><UnitSelect value={unit} onChange={setUnit} /></View></View><Field label="Stock disponible" placeholder="20" value={stock} onChangeText={setStock} icon="cube-outline" keyboardType="phone-pad" /><Text style={stylesFor(colors).fieldLabel}>Catégorie</Text><View style={stylesFor(colors).chipWrap}>{categories.slice(1).map((item) => <Pressable key={item.id} style={[stylesFor(colors).chip, category === item.id && stylesFor(colors).chipActive]} onPress={() => setCategory(item.id)}><Text style={[stylesFor(colors).chipText, category === item.id && stylesFor(colors).chipTextActive]}>{item.label}</Text></Pressable>)}</View><View style={stylesFor(colors).uploadCard}><Ionicons name="image-outline" size={26} color={colors.primary} /><Text style={stylesFor(colors).cardTitle}>Image du produit</Text><Text style={stylesFor(colors).productMeta}>L’image de démonstration sera utilisée pour cette version locale.</Text></View><Pressable style={stylesFor(colors).primaryButton} onPress={submit}><Text style={stylesFor(colors).primaryButtonText}>{product ? 'Enregistrer les modifications' : 'Publier le produit'}</Text><Ionicons name="checkmark" size={18} color={colors.primaryForeground} /></Pressable></ScrollView></KeyboardAvoidingView>;
 }
 
-function FarmerOrders({ onNav, onOrder }: { onNav: (screen: Screen) => void; onOrder: (id: string) => void }) {
+function FarmerOrders({ onNav, onOrder, onMessageOrder }: { onNav: (screen: Screen) => void; onOrder: (id: string) => void; onMessageOrder?: (orderId: string) => void }) {
   const colors = useColors();
   const { orders } = useApp();
   const [filter, setFilter] = useState('Toutes');
   const filters = ['Toutes', 'En attente', 'Confirmée', 'Livrée', 'Annulée'];
   const filtered = filter === 'Toutes' ? orders : filter === 'Livrée' ? orders.filter((order) => order.status === 'Terminée') : orders.filter((order) => order.status === filter);
   const countFor = (status: string) => status === 'Toutes' ? orders.length : status === 'Livrée' ? orders.filter((order) => order.status === 'Terminée').length : orders.filter((order) => order.status === status).length;
-  return <View style={stylesFor(colors).screen}><AppHeader farmer title="Commandes reçues" right={<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('messages')}><Ionicons name="chatbubble-outline" size={22} color={colors.primary} /></Pressable>} /><ScrollView contentContainerStyle={stylesFor(colors).farmerOrdersContent} showsVerticalScrollIndicator={false}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).farmerFilterRow}>{filters.map((item) => <Pressable key={item} style={[stylesFor(colors).farmerFilter, filter === item && stylesFor(colors).farmerFilterActive]} onPress={() => setFilter(item)}><Text style={[stylesFor(colors).farmerFilterText, filter === item && stylesFor(colors).farmerFilterTextActive]}>{item} <Text style={stylesFor(colors).farmerFilterCount}>{countFor(item)}</Text></Text></Pressable>)}</ScrollView><Pressable style={stylesFor(colors).ordersSeeAll} onPress={() => setFilter('Toutes')}><Text style={stylesFor(colors).ordersSeeAllText}>Voir tout</Text><Ionicons name="chevron-forward" size={18} color={colors.primary} /></Pressable>{filtered.map((order) => { const item = order.items[0]; const initials = order.customer.split(' ').map((word) => word[0]).join('').slice(0, 2); return <Pressable key={order.id} style={stylesFor(colors).farmerOrderReferenceCard} onPress={() => onOrder(order.id)}><View style={stylesFor(colors).rowBetween}><View style={stylesFor(colors).orderReferenceHead}><Text style={stylesFor(colors).orderReferenceId}>{order.id.replace('#AD-', '#10')}</Text><FarmerOrderStatus status={order.status} /></View><Text style={stylesFor(colors).orderReferenceDate}>{order.date === 'Aujourd’hui' ? '2026-07-25' : order.date}</Text></View><View style={stylesFor(colors).orderReferenceBody}><View style={stylesFor(colors).orderReferenceAvatar}><Text style={stylesFor(colors).largeAvatarText}>{initials}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{order.customer}</Text><Text style={stylesFor(colors).productMeta}>{item?.product.name} · {item?.quantity} {item?.product.unit}</Text></View><View style={stylesFor(colors).alignEnd}><Text style={stylesFor(colors).orderReferenceTotal}>{money(order.total)}</Text><Ionicons name="chevron-forward" size={20} color={colors.primary} /></View></View></Pressable>; })}{filtered.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande" body="Les commandes correspondant à ce filtre apparaîtront ici." />}</ScrollView><BottomNav items={farmerTabs} active="farmer-orders" onPress={onNav} /></View>;
-  return <View style={stylesFor(colors).screen}><AppHeader farmer title="Commandes reçues" subtitle="Gérez les demandes de vos clients" right={<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('messages')}><Ionicons name="chatbubble-outline" size={19} color={colors.primary} /></Pressable>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).chipRow}>{filters.map((item) => <Pressable key={item} style={[stylesFor(colors).chip, filter === item && stylesFor(colors).chipActive]} onPress={() => setFilter(item)}><Text style={[stylesFor(colors).chipText, filter === item && stylesFor(colors).chipTextActive]}>{item} {countFor(item)}</Text></Pressable>)}</ScrollView><View style={stylesFor(colors).seeAllRow}><Text style={stylesFor(colors).mutedText}>{filtered.length} commande(s) affichée(s)</Text><Pressable onPress={() => setFilter('Toutes')}><Text style={stylesFor(colors).sectionAction}>Voir tout ›</Text></Pressable></View>{filtered.map((order) => <Pressable key={order.id} style={stylesFor(colors).farmerOrderCard} onPress={() => onOrder(order.id)}><View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).cardTitle}>{order.id}</Text><View style={stylesFor(colors).rowBetween}><FarmerOrderStatus status={order.status} /><Text style={stylesFor(colors).productMeta}>{order.date}</Text></View></View><Text style={stylesFor(colors).productMeta}>{order.customer}</Text>{order.items.map((line) => <View key={line.product.id} style={stylesFor(colors).orderProduct}><Image source={{ uri: line.product.image }} style={stylesFor(colors).orderImage} /><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{line.product.name}</Text><Text style={stylesFor(colors).productMeta}>{line.quantity} {line.product.unit}</Text></View><Text style={stylesFor(colors).miniPrice}>{money(order.total)}</Text></View>)}<View style={stylesFor(colors).rowBetween}><Text style={stylesFor(colors).hintText}>Voir le détail</Text><Ionicons name="chevron-forward" size={17} color={colors.primary} /></View></Pressable>)}{filtered.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande" body="Les commandes correspondant à ce filtre apparaîtront ici." />}</ScrollView><BottomNav items={farmerTabs} active="farmer-orders" onPress={onNav} /></View>;
+  const openMessage = (orderId: string) => {
+    if (onMessageOrder) { onMessageOrder(orderId); return; }
+    onNav('messages');
+  };
+  const renderOrderCard = (order: import('@/src/app-context').Order) => {
+    const item = order.items[0];
+  const customerInitials = initials(order.customer);
+    return (
+      <Pressable key={order.id} style={stylesFor(colors).farmerOrderReferenceCard} onPress={() => onOrder(order.id)}>
+        <View style={stylesFor(colors).rowBetween}>
+          <View style={stylesFor(colors).orderReferenceHead}>
+            <Text style={stylesFor(colors).orderReferenceId}>{formatOrderCode(order.id)}</Text>
+            <FarmerOrderStatus status={order.status} />
+          </View>
+          <Text style={stylesFor(colors).orderReferenceDate}>{order.date === 'Aujourd’hui' ? '2026-07-25' : order.date}</Text>
+        </View>
+        <View style={stylesFor(colors).orderReferenceBody}>
+          <View style={stylesFor(colors).orderReferenceAvatar}>
+            <AvatarFill name={order.customer} uri={order.buyerAvatar} textStyle={stylesFor(colors).largeAvatarText} />
+          </View>
+          <View style={stylesFor(colors).flex}>
+            <View style={stylesFor(colors).rowBetween}>
+              <Text style={stylesFor(colors).cardTitle}>{order.customer}</Text>
+              <Text style={stylesFor(colors).productMeta}>{item.product.name}</Text>
+            </View>
+            <View style={stylesFor(colors).rowBetween}>
+              <Text style={stylesFor(colors).miniPrice}>{money(order.total)}</Text>
+              <Pressable style={stylesFor(colors).orderActionButton} onPress={(event) => { event.stopPropagation(); openMessage(order.id); }}>
+                <Ionicons name="chatbubble-outline" size={16} color={colors.primary} />
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Pressable>
+    );
+  };
+  return (
+    <View style={stylesFor(colors).screen}>
+      <AppHeader farmer title="Commandes reçues" right={<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('messages')}><Ionicons name="chatbubble-outline" size={22} color={colors.primary} /></Pressable>} />
+      <ScrollView contentContainerStyle={stylesFor(colors).farmerOrdersContent} showsVerticalScrollIndicator={false}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={stylesFor(colors).farmerFilterRow}>
+          {filters.map((item) => (
+            <Pressable key={item} style={[stylesFor(colors).farmerFilter, filter === item && stylesFor(colors).farmerFilterActive]} onPress={() => setFilter(item)}>
+              <Text style={[stylesFor(colors).farmerFilterText, filter === item && stylesFor(colors).farmerFilterTextActive]}>{item} <Text style={stylesFor(colors).farmerFilterCount}>{countFor(item)}</Text></Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <Pressable style={stylesFor(colors).ordersSeeAll} onPress={() => setFilter('Toutes')}>
+          <Text style={stylesFor(colors).ordersSeeAllText}>Voir tout</Text>
+          <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+        </Pressable>
+        {filtered.map(renderOrderCard)}
+        {filtered.length === 0 && <EmptyState icon="bag-outline" title="Aucune commande" body="Les demandes de vos clients apparaîtront ici." />}
+      </ScrollView>
+      <BottomNav items={farmerTabs} active="farmer-orders" onPress={onNav} />
+    </View>
+  );
 }
 
 function SalesScreen({ onNav }: { onNav: (screen: Screen) => void }) {
@@ -1219,8 +1513,12 @@ function AccountProfile({ onNav, onSignOut, farmer = false }: { onNav: (screen: 
   const saveProfile = async () => {
     const selectedCountry = countryOptions.find((country) => country.code === draft.countryCode) ?? countryOptions[0];
     const number = normalizePhone(draft.phone);
-    if (draft.name.trim().length < 2 || !draft.email.includes('@') || number.length !== selectedCountry.digits || !draft.location.trim() || !draft.address.trim()) {
-      toast('Vérifiez votre nom, email, numéro, localisation et adresse.');
+    if (draft.name.trim().length < 2) {
+      toast('Votre nom doit contenir au moins 2 caractères.');
+      return;
+    }
+    if (number.length !== selectedCountry.digits) {
+      toast('Vérifiez votre numéro de téléphone.');
       return;
     }
     updateProfile({ ...draft, name: draft.name.trim(), email: draft.email.trim(), phone: number, countryName: selectedCountry.name, location: draft.location.trim(), address: draft.address.trim(), crops: draft.crops.trim(), surface: draft.surface.trim() });
@@ -1235,38 +1533,119 @@ function AccountProfile({ onNav, onSignOut, farmer = false }: { onNav: (screen: 
   };
   const roleLabel = farmer ? 'Agriculteur' : 'Acheteur';
   const selectedPayment = paymentMethods.find((method) => method.id === selectedPaymentMethodId) ?? { label: '', reference: '' };
-  return <View style={stylesFor(colors).screen}><AppHeader farmer={farmer} title="Mon profil" subtitle={farmer ? 'Votre espace agriculteur' : 'Votre espace personnel'} right={<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('messages')}><Ionicons name="chatbubble-outline" size={19} color={colors.primary} /></Pressable>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} keyboardShouldPersistTaps="handled"><View style={stylesFor(colors).profileCard}><View style={stylesFor(colors).largeAvatar}><Text style={stylesFor(colors).largeAvatarText}>{profile.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{profile.name}</Text><Text style={stylesFor(colors).productMeta}>{roleLabel} · {profile.location}</Text><Text style={stylesFor(colors).rating}>{profile.countryCode} {profile.phone}</Text></View><Pressable onPress={() => { setDraft(profile); setEditing(!editing); }} style={stylesFor(colors).profileEditButton}><Ionicons name="create-outline" size={17} color={colors.primary} /><Text style={stylesFor(colors).profileEditLabel}>{editing ? 'Fermer' : 'Modifier'}</Text></Pressable></View>{editing && <View style={stylesFor(colors).editCard}><Text style={stylesFor(colors).settingsEditorTitle}>Informations personnelles</Text><Field label="Nom complet" placeholder="Votre nom" value={draft.name} onChangeText={(name) => setDraft((current) => ({ ...current, name }))} icon="person-outline" /><Field label="Adresse email" placeholder="vous@exemple.com" value={draft.email} onChangeText={(email) => setDraft((current) => ({ ...current, email }))} keyboardType="email-address" icon="mail-outline" /><CountryPhoneField countryCode={draft.countryCode} phone={draft.phone} onCountryChange={(country) => setDraft((current) => ({ ...current, countryCode: country.code, countryName: country.name }))} onPhoneChange={(phone) => setDraft((current) => ({ ...current, phone }))} /><LocationEditor location={draft.location} address={draft.address} onLocationChange={(location) => setDraft((current) => ({ ...current, location }))} onAddressChange={(address) => setDraft((current) => ({ ...current, address }))} />{farmer && <><Text style={stylesFor(colors).settingsEditorTitle}>Mon exploitation</Text><Field label="Cultures principales" placeholder="Tomates, maïs…" value={draft.crops} onChangeText={(crops) => setDraft((current) => ({ ...current, crops }))} icon="leaf-outline" /><Field label="Superficie" placeholder="1 ha" value={draft.surface} onChangeText={(surface) => setDraft((current) => ({ ...current, surface }))} icon="resize-outline" /></>}<Pressable style={stylesFor(colors).smallButton} onPress={saveProfile}><Text style={stylesFor(colors).smallButtonText}>Enregistrer les modifications</Text></Pressable></View>}<ProfileMenuItem icon="location-outline" title="Adresse" subtitle={profile.address} onPress={() => { setDraft(profile); setEditing(true); }} /><ProfileMenuItem icon="card-outline" title="Moyen de paiement" subtitle={selectedPayment ? `${selectedPayment.label} · ${selectedPayment.reference}` : 'Ajouter un moyen'} onPress={choosePayment} /><ProfileMenuItem icon="notifications-outline" title="Notifications" subtitle={profile.notificationsEnabled ? 'Activées' : 'Désactivées'} toggle value={profile.notificationsEnabled} onToggle={() => updateProfile({ notificationsEnabled: !profile.notificationsEnabled })} /><ProfileMenuItem icon="moon-outline" title="Apparence" subtitle={themeMode === 'dark' ? 'Mode nuit' : 'Mode jour'} toggle value={themeMode === 'dark'} onToggle={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')} /><ProfileMenuItem icon="globe-outline" title="Langue" subtitle={languageLabel(language)} onPress={chooseLanguage} /><ProfileMenuItem icon="shield-checkmark-outline" title="Sécurité" subtitle="Mot de passe et accès" onPress={() => Alert.alert('Sécurité du compte', 'Pour changer votre mot de passe, utilisez « Mot de passe oublié » depuis l’écran de connexion.')} /><ProfileMenuItem icon="help-circle-outline" title="Centre d’aide" subtitle="FAQ et assistance" onPress={() => Alert.alert('Centre d’aide', 'Pour toute assistance, écrivez à support@adjal.cm ou ouvrez la conversation « A djal support ».')} />{paymentEditor && <View style={stylesFor(colors).editCard}><Text style={stylesFor(colors).settingsEditorTitle}>Ajouter un paiement local</Text><Field label="Moyen de paiement" placeholder="Mobile Money, Orange Money…" value={paymentLabel} onChangeText={setPaymentLabel} icon="card-outline" /><Field label="Numéro associé" placeholder="6 90 00 00 00" value={paymentReference} onChangeText={setPaymentReference} keyboardType="phone-pad" icon="call-outline" /><Pressable style={stylesFor(colors).smallButton} onPress={addPayment}><Text style={stylesFor(colors).smallButtonText}>Ajouter ce moyen</Text></Pressable></View>}<Pressable style={stylesFor(colors).logoutButton} onPress={onSignOut}><Ionicons name="log-out-outline" size={19} color={colors.destructive} /><Text style={stylesFor(colors).dangerLink}>Se déconnecter</Text></Pressable></ScrollView><BottomNav items={farmer ? farmerTabs : buyerTabs} active={farmer ? 'farmer-profile' : 'profile'} onPress={onNav} cartCount={cartCount} /></View>;
+  return <View style={stylesFor(colors).screen}><AppHeader farmer={farmer} title="Mon profil" subtitle={farmer ? 'Votre espace agriculteur' : 'Votre espace personnel'} right={<Pressable style={stylesFor(colors).headerCircle} onPress={() => onNav('messages')}><Ionicons name="chatbubble-outline" size={19} color={colors.primary} /></Pressable>} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent} keyboardShouldPersistTaps="handled"><View style={stylesFor(colors).profileCard}><View style={stylesFor(colors).largeAvatar}><Text style={stylesFor(colors).largeAvatarText}>{initials(profile.name)}</Text></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).h3}>{profile.name}</Text><Text style={stylesFor(colors).productMeta}>{roleLabel} · {profile.location}</Text><Text style={stylesFor(colors).rating}>{profile.countryCode} {profile.phone}</Text></View><Pressable onPress={() => { setDraft(profile); setEditing(!editing); }} style={stylesFor(colors).profileEditButton}><Ionicons name="create-outline" size={17} color={colors.primary} /><Text style={stylesFor(colors).profileEditLabel}>{editing ? 'Fermer' : 'Modifier'}</Text></Pressable></View>{editing && <View style={stylesFor(colors).editCard}><Text style={stylesFor(colors).settingsEditorTitle}>Informations personnelles</Text><Field label="Nom complet" placeholder="Votre nom" value={draft.name} onChangeText={(name) => setDraft((current) => ({ ...current, name }))} icon="person-outline" /><Field label="Adresse email" placeholder="vous@exemple.com" value={draft.email} onChangeText={(email) => setDraft((current) => ({ ...current, email }))} keyboardType="email-address" icon="mail-outline" /><CountryPhoneField countryCode={draft.countryCode} phone={draft.phone} onCountryChange={(country) => setDraft((current) => ({ ...current, countryCode: country.code, countryName: country.name }))} onPhoneChange={(phone) => setDraft((current) => ({ ...current, phone }))} /><LocationEditor location={draft.location} address={draft.address} onLocationChange={(location) => setDraft((current) => ({ ...current, location }))} onAddressChange={(address) => setDraft((current) => ({ ...current, address }))} />{farmer && <><Text style={stylesFor(colors).settingsEditorTitle}>Mon exploitation</Text><Field label="Cultures principales" placeholder="Tomates, maïs…" value={draft.crops} onChangeText={(crops) => setDraft((current) => ({ ...current, crops }))} icon="leaf-outline" /><Field label="Superficie" placeholder="1 ha" value={draft.surface} onChangeText={(surface) => setDraft((current) => ({ ...current, surface }))} icon="resize-outline" /></>}<Pressable style={stylesFor(colors).smallButton} onPress={saveProfile}><Text style={stylesFor(colors).smallButtonText}>Enregistrer les modifications</Text></Pressable></View>}<ProfileMenuItem icon="location-outline" title="Adresse" subtitle={profile.address} onPress={() => { setDraft(profile); setEditing(true); }} /><ProfileMenuItem icon="card-outline" title="Moyen de paiement" subtitle={selectedPayment ? `${selectedPayment.label} · ${selectedPayment.reference}` : 'Ajouter un moyen'} onPress={choosePayment} /><ProfileMenuItem icon="notifications-outline" title="Notifications" subtitle={profile.notificationsEnabled ? 'Activées' : 'Désactivées'} toggle value={profile.notificationsEnabled} onToggle={() => updateProfile({ notificationsEnabled: !profile.notificationsEnabled })} /><ProfileMenuItem icon="moon-outline" title="Apparence" subtitle={themeMode === 'dark' ? 'Mode nuit' : 'Mode jour'} toggle value={themeMode === 'dark'} onToggle={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')} /><ProfileMenuItem icon="globe-outline" title="Langue" subtitle={languageLabel(language)} onPress={chooseLanguage} /><ProfileMenuItem icon="shield-checkmark-outline" title="Sécurité" subtitle="Mot de passe et accès" onPress={() => Alert.alert('Sécurité du compte', 'Pour changer votre mot de passe, utilisez « Mot de passe oublié » depuis l’écran de connexion.')} /><ProfileMenuItem icon="help-circle-outline" title="Centre d’aide" subtitle="FAQ et assistance" onPress={() => Alert.alert('Centre d’aide', 'Pour toute assistance, écrivez à support@adjal.cm ou ouvrez la conversation « A djal support ».')} />{paymentEditor && <View style={stylesFor(colors).editCard}><Text style={stylesFor(colors).settingsEditorTitle}>Ajouter un paiement local</Text><Field label="Moyen de paiement" placeholder="Mobile Money, Orange Money…" value={paymentLabel} onChangeText={setPaymentLabel} icon="card-outline" /><Field label="Numéro associé" placeholder="6 90 00 00 00" value={paymentReference} onChangeText={setPaymentReference} keyboardType="phone-pad" icon="call-outline" /><Pressable style={stylesFor(colors).smallButton} onPress={addPayment}><Text style={stylesFor(colors).smallButtonText}>Ajouter ce moyen</Text></Pressable></View>}<Pressable style={stylesFor(colors).logoutButton} onPress={onSignOut}><Ionicons name="log-out-outline" size={19} color={colors.destructive} /><Text style={stylesFor(colors).dangerLink}>Se déconnecter</Text></Pressable></ScrollView><BottomNav items={farmer ? farmerTabs : buyerTabs} active={farmer ? 'farmer-profile' : 'profile'} onPress={onNav} cartCount={cartCount} /></View>;
 }
 
 function ProfileAvatar({ uri, name, editable, onPress }: { uri?: string; name: string; editable?: boolean; onPress?: () => void }) {
   const colors = useColors();
-  const initials = name.split(' ').map((part) => part[0]).join('').slice(0, 2);
+  const displayInitials = initials(name);
   return <Pressable disabled={!editable} accessibilityLabel="Choisir une photo de profil" onPress={onPress} style={stylesFor(colors).avatarPressable}>
-    <View style={stylesFor(colors).largeAvatar}>{uri ? <Image source={{ uri }} style={stylesFor(colors).avatarPhoto} /> : <Text style={stylesFor(colors).largeAvatarText}>{initials}</Text>}</View>
+    <View style={stylesFor(colors).largeAvatar}>{uri ? <Image source={{ uri }} style={stylesFor(colors).avatarPhoto} /> : <Text style={stylesFor(colors).largeAvatarText}>{displayInitials}</Text>}</View>
     {editable && <View style={stylesFor(colors).avatarCamera}><Ionicons name="camera" size={13} color={colors.primaryForeground} /></View>}
   </Pressable>;
 }
 
-function NotificationsScreen({ onBack }: { onBack: () => void }) {
+/** Icône, couleur et libellé d'action selon le type de notification envoyé par le backend. */
+function notificationPresentation(item: ApiNotification): { icon: keyof typeof Ionicons.glyphMap; action: string | null } {
+  const source = item.resourceType ?? '';
+  if (item.type === 'message' || source === 'conversation') return { icon: 'chatbubble-ellipses-outline', action: 'Ouvrir la conversation' };
+  if (item.type === 'new_order') return { icon: 'bag-add-outline', action: 'Voir la commande' };
+  if (item.type.includes('order') || source === 'order') return { icon: 'bag-handle-outline', action: 'Voir la commande' };
+  if (item.type.includes('product') || source === 'product') return { icon: 'leaf-outline', action: 'Voir le produit' };
+  return { icon: 'notifications-outline', action: null };
+}
+
+function NotificationsScreen({ onBack, onOpen }: { onBack: () => void; onOpen: (item: ApiNotification) => Promise<boolean> }) {
   const colors = useColors();
-  const { accessToken, profile } = useApp();
+  const toast = useToast();
+  const { accessToken, profile, refreshNotifications } = useApp();
   const [items, setItems] = useState<ApiNotification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const load = async () => {
+    if (!accessToken || !profile.notificationsEnabled) { setItems([]); setLoading(false); return; }
+    try {
+      const result = await apiGetNotifications(accessToken);
+      setItems([...result].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    } catch {
+      // Garde la liste actuelle si le serveur ne répond pas.
+    } finally {
+      setLoading(false);
+    }
+  };
   useEffect(() => {
-    let active = true;
-    (async () => {
-      if (!accessToken || !profile.notificationsEnabled) { if (active) { setItems([]); setLoading(false); } return; }
-      try { const result = await apiGetNotifications(accessToken); if (active) setItems(result); } finally { if (active) setLoading(false); }
-    })();
-    return () => { active = false; };
+    void load();
+    const timer = setInterval(() => void load(), 15000);
+    return () => clearInterval(timer);
   }, [accessToken, profile.notificationsEnabled]);
   const unread = items.filter((item) => !item.readAt).length;
-  const markRead = async (id: string) => {
-    if (!accessToken) return;
-    await apiMarkNotificationRead(accessToken, id);
-    setItems((current) => current.map((item) => item.id === id ? { ...item, readAt: item.readAt ?? new Date().toISOString() } : item));
+  const markRead = async (item: ApiNotification) => {
+    if (!accessToken || item.readAt) return;
+    setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, readAt: new Date().toISOString() } : entry));
+    try {
+      await apiMarkNotificationRead(accessToken, item.id);
+    } finally {
+      void refreshNotifications();
+    }
   };
-  return <View style={stylesFor(colors).screen}><AppHeader title="Notifications" onBack={onBack} subtitle={profile.notificationsEnabled ? `${unread} non lue(s)` : 'Désactivées'} /><ScrollView contentContainerStyle={stylesFor(colors).pageContent}>{!profile.notificationsEnabled ? <EmptyState icon="notifications-off-outline" title="Notifications désactivées" body="Activez-les depuis votre profil pour afficher les événements serveur." /> : loading ? <Text style={stylesFor(colors).body}>Chargement…</Text> : items.length === 0 ? <EmptyState icon="notifications-outline" title="Aucune notification" body="Les commandes, messages et produits apparaîtront ici." /> : items.map((item) => <Pressable key={item.id} style={stylesFor(colors).notificationCard} onPress={() => void markRead(item.id)}><View style={stylesFor(colors).notificationIcon}><Ionicons name={item.type === 'message' ? 'chatbubble-outline' : item.type === 'order' ? 'bag-handle-outline' : 'notifications-outline'} size={18} color={colors.primary} /></View><View style={stylesFor(colors).flex}><Text style={stylesFor(colors).cardTitle}>{item.title}</Text><Text style={stylesFor(colors).bodySmall}>{item.body}</Text><Text style={stylesFor(colors).hintText}>{new Date(item.createdAt).toLocaleString('fr-FR')}</Text></View></Pressable>)}</ScrollView></View>;
+  const markAllRead = async () => {
+    const pending = items.filter((item) => !item.readAt);
+    await Promise.allSettled(pending.map((item) => markRead(item)));
+  };
+  const open = async (item: ApiNotification) => {
+    if (openingId) return;
+    setOpeningId(item.id);
+    try {
+      await markRead(item);
+      const opened = await onOpen(item);
+      if (!opened) toast('Le contenu lié à cette notification n’est plus disponible.');
+    } catch {
+      toast('Impossible d’ouvrir cette notification pour le moment.');
+    } finally {
+      setOpeningId(null);
+    }
+  };
+  const styles = stylesFor(colors);
+  return <View style={styles.screen}>
+    <AppHeader
+      title="Notifications"
+      onBack={onBack}
+      subtitle={profile.notificationsEnabled ? `${unread} non lue(s)` : 'Désactivées'}
+      right={unread > 0 ? <Pressable onPress={() => void markAllRead()} hitSlop={8}><Text style={styles.sectionAction}>Tout lire</Text></Pressable> : undefined}
+    />
+    <ScrollView contentContainerStyle={styles.pageContent}>
+      {!profile.notificationsEnabled
+        ? <EmptyState icon="notifications-off-outline" title="Notifications désactivées" body="Activez-les depuis votre profil pour afficher les événements serveur." />
+        : loading
+          ? <Text style={styles.body}>Chargement…</Text>
+          : items.length === 0
+            ? <EmptyState icon="notifications-outline" title="Aucune notification" body="Les commandes, messages et produits apparaîtront ici." />
+            : items.map((item) => {
+              const presentation = notificationPresentation(item);
+              const isUnread = !item.readAt;
+              return <Pressable
+                key={item.id}
+                accessibilityRole="button"
+                accessibilityHint={presentation.action ?? undefined}
+                style={({ pressed }) => [styles.notificationCard, isUnread && { borderColor: colors.primary, backgroundColor: colors.softGreen }, pressed && { opacity: 0.7 }]}
+                onPress={() => void open(item)}
+              >
+                <View style={styles.notificationIcon}><Ionicons name={presentation.icon} size={18} color={colors.primary} /></View>
+                <View style={styles.flex}>
+                  <Text style={styles.cardTitle}>{item.title}</Text>
+                  <Text style={styles.bodySmall}>{item.body}</Text>
+                  <Text style={styles.hintText}>{formatMessageTime(item.createdAt)}{presentation.action ? ` · ${presentation.action}` : ''}</Text>
+                </View>
+                {openingId === item.id
+                  ? <ActivityIndicator size="small" color={colors.primary} />
+                  : <View style={{ alignItems: 'center', gap: 6 }}>
+                    {isUnread && <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.primary }} />}
+                    {presentation.action && <Ionicons name="chevron-forward" size={18} color={colors.mutedForeground} />}
+                  </View>}
+              </Pressable>;
+            })}
+    </ScrollView>
+  </View>;
 }
 
 function ProfileSettingsScreen({ onNav, onSignOut, farmer }: { onNav: (screen: Screen) => void; onSignOut: () => void; farmer: boolean }) {
@@ -1317,8 +1696,12 @@ function ProfileSettingsScreen({ onNav, onSignOut, farmer }: { onNav: (screen: S
   const saveProfile = async () => {
     const country = countryOptions.find((item) => item.code === draft.countryCode) ?? countryOptions[0];
     const phone = normalizePhone(draft.phone);
-    if (draft.name.trim().length < 2 || !draft.email.includes('@') || phone.length !== country.digits || !draft.location.trim() || !draft.address.trim()) {
-      toast('Vérifiez votre nom, email, numéro, localisation et adresse.');
+    if (draft.name.trim().length < 2) {
+      toast('Votre nom doit contenir au moins 2 caractères.');
+      return;
+    }
+    if (phone.length !== country.digits) {
+      toast('Vérifiez votre numéro de téléphone.');
       return;
     }
     try {
@@ -1396,7 +1779,7 @@ function InterestOnboarding({ onDone }: { onDone: () => void }) {
         example: categoryProducts.length
           ? categoryProducts.slice(0, 2).map((product) => product.name).join(' · ')
           : 'Récoltes locales du Cameroun',
-        image: categoryProducts[0]?.image ?? categoryImageFor(category.id),
+        image: (category as { imageUrl?: string | null }).imageUrl ?? categoryProducts[0]?.image ?? categoryImageFor(category.id),
         icon: category.icon as keyof typeof Ionicons.glyphMap,
       };
     });
@@ -1647,14 +2030,11 @@ function stylesFor(colors: ReturnType<typeof useColors>) {
     offerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     offerBadge: { alignSelf: 'flex-start', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 9, backgroundColor: colors.orange },
     offerBadgeText: { color: colors.primaryForeground, fontFamily: 'Inter_700Bold', fontSize: 9 },
-    offerDiscount: { minWidth: 43, alignItems: 'center', paddingHorizontal: 8, paddingVertical: 5, borderRadius: 10, backgroundColor: colors.card },
-    offerDiscountText: { color: colors.primary, fontFamily: 'Inter_700Bold', fontSize: 12 },
     offerLabel: { color: 'rgba(255,255,255,0.84)', fontFamily: 'Inter_600SemiBold', fontSize: 11 },
     offerProductName: { color: colors.primaryForeground, fontFamily: 'Inter_700Bold', fontSize: 23, marginTop: 1 },
     offerMeta: { color: 'rgba(255,255,255,0.85)', fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 2 },
     offerPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
     offerPrice: { color: colors.primaryForeground, fontFamily: 'Inter_700Bold', fontSize: 15 },
-    offerOriginalPrice: { color: 'rgba(255,255,255,0.68)', fontFamily: 'Inter_400Regular', fontSize: 11, textDecorationLine: 'line-through', flex: 1 },
     offerDots: { flexDirection: 'row', justifyContent: 'center', gap: 5, marginTop: 9, marginBottom: 4 },
     offerDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border },
     offerDotActive: { width: 18, backgroundColor: colors.primary },
@@ -2046,7 +2426,7 @@ function stylesFor(colors: ReturnType<typeof useColors>) {
      unreadBadge: { position: 'absolute', right: -2, top: -3, minWidth: 17, height: 17, borderRadius: 9, backgroundColor: colors.orange, alignItems: 'center', justifyContent: 'center' },
      unreadText: { color: colors.primaryForeground, fontFamily: 'Inter_700Bold', fontSize: 9 },
      chatHeader: { minHeight: 78, paddingHorizontal: 14, paddingTop: 9, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border },
-     chatBack: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.muted, alignItems: 'center', justifyContent: 'center' },
+      chatBack: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.muted, alignItems: 'center', justifyContent: 'center', zIndex: 10 },
      chatAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', position: 'relative' },
      onlineDot: { position: 'absolute', right: 1, bottom: 2, width: 11, height: 11, borderRadius: 6, backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.card },
      onlineText: { color: colors.primary, fontFamily: 'Inter_500Medium', fontSize: 10, marginTop: 3 },
