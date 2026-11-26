@@ -4,3 +4,9 @@ dist/
 .expo-shared/
 .cache/
 *.tsbuildinfo
+
+# Secrets locaux
+.env
+
+# Bundles generes
+mobile/bundle_*.js

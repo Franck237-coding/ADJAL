@@ -1,0 +1,10 @@
+smtp.properties
+
+# Secrets locaux
+.env
+
+# Fichiers compiles par Maven
+target/
+
+# Images envoyees pendant les tests
+uploads/
